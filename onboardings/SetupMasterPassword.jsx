@@ -12,6 +12,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { COLORS, SPACING, RADIUS } from './theme';
 
 function getPasswordStrength(password) {
@@ -53,7 +54,7 @@ export default function SetupMasterPassword({ navigation }) {
     }).start();
   }, [strength.level]);
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!password || !confirmPassword) {
       Alert.alert('Required', 'Please fill in both password fields.');
       return;
@@ -66,7 +67,14 @@ export default function SetupMasterPassword({ navigation }) {
       Alert.alert('Weak Password', 'Please create a stronger password.');
       return;
     }
-    navigation.navigate('SetupNickname');
+    
+    try {
+      await SecureStore.setItemAsync('master_password', password);
+      navigation.navigate('SetupNickname');
+    } catch (error) {
+      console.error('Error saving password:', error);
+      Alert.alert('Storage Error', 'Could not save master password securely.');
+    }
   };
 
   const renderDots = (value, focused) => {

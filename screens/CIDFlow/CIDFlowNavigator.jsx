@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, ScrollView, TouchableOpacity, Text } from 'react-native';
 import { COLORS } from '../../theme/colors';
-import { CIDProvider, useCIDContext } from '../../context/CIDContext';
+import { useCIDContext } from '../../context/CIDContext';
 
 // Import all screens
 import Screen42GeneratingCID from './Screen42GeneratingCID';
@@ -168,9 +168,7 @@ const CIDFlowNavigator = ({ route, navigation }) => {
   };
   
   return (
-    <CIDProvider>
-      <CIDFlowNavigatorContent onFlowComplete={handleFlowComplete} />
-    </CIDProvider>
+    <CIDFlowNavigatorContent onFlowComplete={handleFlowComplete} />
   );
 };
 

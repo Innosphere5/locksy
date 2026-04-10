@@ -10,6 +10,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
 
@@ -37,12 +38,21 @@ export default function ChangePasswordScreen({ navigation }) {
 
   const strength = getPasswordStrength(newPass);
 
-  const handleVerifyPassword = () => {
+  const handleVerifyPassword = async () => {
     if (currentPass.length === 0) {
       Alert.alert('Error', 'Enter current password first');
       return;
     }
-    setStep(2);
+    try {
+      const realPass = await SecureStore.getItemAsync('master_password');
+      if (realPass && currentPass !== realPass) {
+        Alert.alert('Error', 'Incorrect current password');
+        return;
+      }
+      setStep(2);
+    } catch (e) {
+      Alert.alert('Error', 'Failed to verify password');
+    }
   };
 
   const handleSetNewPassword = () => {
@@ -53,13 +63,18 @@ export default function ChangePasswordScreen({ navigation }) {
     setStep(3);
   };
 
-  const handleUpdatePassword = () => {
+  const handleUpdatePassword = async () => {
     if (newPass !== confirmPass) {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
-    Alert.alert('Success', 'Password updated successfully!');
-    navigation.goBack();
+    try {
+      await SecureStore.setItemAsync('master_password', newPass);
+      Alert.alert('Success', 'Password updated successfully!');
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert('Error', 'Could not save new password natively');
+    }
   };
 
   return (

@@ -7,6 +7,7 @@ import {
   Animated,
   Dimensions,
 } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { COLORS, SPACING, RADIUS } from './theme';
 
 const { width, height } = Dimensions.get('window');
@@ -44,12 +45,26 @@ export default function SplashScreen({ navigation }) {
       }),
     ]).start();
 
-    const timer = setTimeout(() => {
-      navigation.replace('Onboarding');
-    }, 2400);
+    const checkAuthStatus = async () => {
+      try {
+        const storedPassword = await SecureStore.getItemAsync('master_password');
+        setTimeout(() => {
+          if (storedPassword) {
+            navigation.replace('WelcomeBack');
+          } else {
+            navigation.replace('Onboarding');
+          }
+        }, 2400);
+      } catch (error) {
+        console.error('Error checking secure store:', error);
+        setTimeout(() => {
+          navigation.replace('Onboarding');
+        }, 2400);
+      }
+    };
 
-    return () => clearTimeout(timer);
-  }, []);
+    checkAuthStatus();
+  }, [navigation]);
 
   return (
     <View style={styles.container}>

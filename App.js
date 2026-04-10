@@ -4,6 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { GroupsProvider } from './context/GroupsContext';
 import { CallsProvider } from './context/CallsContext';
+import { CIDProvider } from './context/CIDContext';
 
 // ── Onboarding ────────────────────────────────────────────────────────────────
 import SplashScreen from './onboardings/SplashScreen';
@@ -72,11 +73,12 @@ const Stack = createNativeStackNavigator();
 
 export default function App() {
   return (
-    <GroupsProvider>
-      <CallsProvider>
-        <NavigationContainer>
-          <StatusBar style="dark" />
-          <Stack.Navigator
+    <CIDProvider>
+      <GroupsProvider>
+        <CallsProvider>
+          <NavigationContainer>
+            <StatusBar style="dark" />
+            <Stack.Navigator
             initialRouteName="Splash"
             screenOptions={{ headerShown: false, animation: 'fade' }}
           >
@@ -287,8 +289,9 @@ export default function App() {
           options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
         />
       </Stack.Navigator>
-        </NavigationContainer>
-      </CallsProvider>
-    </GroupsProvider>
+          </NavigationContainer>
+        </CallsProvider>
+      </GroupsProvider>
+    </CIDProvider>
   );
 }

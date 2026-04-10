@@ -14,6 +14,8 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { useCIDContext } from '../../context/CIDContext';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
 
 const { width: screenWidth } = Dimensions.get('screen');
@@ -23,25 +25,50 @@ const { width: screenWidth } = Dimensions.get('screen');
  * Edit user's nickname with validation and previous nicknames
  */
 export default function EditNicknameScreen({ navigation }) {
-  const [nickname, setNickname] = useState('NightHawk_7');
+  const { userNickname, updateNickname, userAvatar, updateAvatar } = useCIDContext();
+  const [nickname, setNickname] = useState(userNickname || '');
+  const [pickedAvatar, setPickedAvatar] = useState(userAvatar);
   const [isSaving, setIsSaving] = useState(false);
 
+  const handlePickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Sorry, we need camera roll permissions to make this work!');
+      return;
+    }
+
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      setPickedAvatar(result.assets[0].uri);
+    }
+  };
+
   const previousNicknames = [
-    { id: '1', name: 'Phantom_X', label: 'Current' },
-    { id: '2', name: 'GhostMode', label: 'Previous' },
+    { id: '1', name: userNickname || 'Locksy_User', label: 'Current' },
   ];
 
-  const handleSaveNickname = () => {
+  const handleSaveNickname = async () => {
     if (nickname.length < 3) {
       Alert.alert('Invalid', 'Nickname must be at least 3 characters');
       return;
     }
     setIsSaving(true);
-    setTimeout(() => {
-      setIsSaving(false);
-      Alert.alert('Success', 'Nickname updated!');
-      navigation.goBack();
-    }, 1000);
+    
+    // Natively wait for local context/storage modification
+    await updateNickname(nickname.trim());
+    if (pickedAvatar !== userAvatar) {
+      await updateAvatar(pickedAvatar);
+    }
+    
+    setIsSaving(false);
+    Alert.alert('Success', 'Profile updated successfully!');
+    navigation.goBack();
   };
 
   const handleRestore = (name) => {
@@ -73,9 +100,18 @@ export default function EditNicknameScreen({ navigation }) {
       >
         {/* Avatar Preview */}
         <View style={styles.previewSection}>
-          <View style={styles.avatarPreview}>
-            <Text style={styles.avatarText}>👤</Text>
-          </View>
+          <TouchableOpacity onPress={handlePickImage} activeOpacity={0.8} style={styles.avatarWrapper}>
+            <View style={[styles.avatarPreview, { overflow: 'hidden', marginBottom: 0 }]}>
+              {pickedAvatar ? (
+                 <Image source={{ uri: pickedAvatar }} style={{ width: '100%', height: '100%' }} />
+              ) : (
+                 <Text style={styles.avatarText}>{nickname[0]?.toUpperCase() || '?'}</Text>
+              )}
+            </View>
+            <View style={styles.editBadge}>
+              <MaterialCommunityIcons name="camera" size={16} color={COLORS.white} />
+            </View>
+          </TouchableOpacity>
           <Text style={styles.previewLabel}>Preview · Visible to all contacts</Text>
         </View>
 
@@ -299,5 +335,22 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.body1,
     color: COLORS.white,
     fontWeight: '600',
+  },
+  avatarWrapper: {
+    position: 'relative',
+    marginBottom: SPACING.md,
+  },
+  editBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.background,
   },
 });

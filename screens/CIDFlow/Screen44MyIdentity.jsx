@@ -10,6 +10,7 @@ import {
   Clipboard,
   Alert,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { COLORS } from '../../theme/colors';
 import { NavBar } from '../../component/CIDFlowShared';
 import { CIDFlowStyles } from '../common/CIDFlowStyles';
@@ -21,9 +22,15 @@ import { useCIDContext } from '../../context/CIDContext';
  * Actions: Copy CID, Show QR Code, Share CID
  */
 const Screen44MyIdentity = ({ onNext, onBack }) => {
-  const { userCID } = useCIDContext();
+  const { userCID, setUserCID } = useCIDContext();
+  const navigation = useNavigation();
   const userName = 'Phantom_X';
   const userAvatar = '👤';
+
+  React.useEffect(() => {
+    // Aggressively flush CID to secure store
+    if (userCID) setUserCID(userCID);
+  }, [userCID, setUserCID]);
 
   const handleCopyCID = async () => {
     try {
@@ -127,6 +134,25 @@ const Screen44MyIdentity = ({ onNext, onBack }) => {
             💡 Your CID is unique to this device and never leaves your phone. It's used for end-to-end encryption.
           </Text>
         </View>
+        
+        {/* Skip Container */}
+        <TouchableOpacity
+          style={{
+            marginTop: 32,
+            marginBottom: 32,
+            alignItems: 'center',
+            paddingVertical: 16,
+          }}
+          onPress={() => navigation.navigate('SetupMasterPassword')}
+        >
+          <Text style={{
+            fontSize: 15,
+            fontWeight: '600',
+            color: COLORS.primary,
+          }}>
+            Skip and Continue Setup →
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );

@@ -1,537 +1,80 @@
-import { StyleSheet, Dimensions, Platform } from 'react-native';
-import { COLORS } from '../../theme/colors';
+import { StyleSheet, Dimensions } from 'react-native';
+import { COLORS, SPACING, RADIUS } from '../../theme';
 
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
 export const CIDFlowStyles = StyleSheet.create({
-  // ========== CONTAINERS ==========
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  safeAreaWhite: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-  },
-  safeAreaDark: {
-    flex: 1,
-    backgroundColor: COLORS.dark,
-  },
-  centeredContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingBottom: 40,
-  },
-  scrollContent: {
-    padding: 24,
-    paddingBottom: 40,
-  },
-
-  // ========== TYPOGRAPHY ==========
-  headingLg: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: COLORS.text,
-    textAlign: 'center',
-    marginTop: 8,
-  },
-  headingMd: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.text,
-    textAlign: 'center',
-  },
-  subText: {
-    fontSize: 14,
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    marginTop: 8,
-    lineHeight: 20,
-  },
-  cryptoNote: {
-    fontSize: 12,
-    color: COLORS.textMuted,
-    marginTop: 24,
-  },
-
-  // ========== ICONS & CONTAINERS ==========
-  iconContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 20,
-    backgroundColor: COLORS.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  iconEmoji: {
-    fontSize: 34,
-  },
-
-  // ========== SPINNER ==========
-  spinner: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 3,
-    borderColor: COLORS.slate200,
-    borderTopColor: COLORS.primary,
-    marginTop: 24,
-  },
-
-  // ========== CID CARD ==========
-  cidCard: {
-    backgroundColor: COLORS.primaryLight,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    width: '100%',
-    marginTop: 20,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-  },
-  cidCardLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    color: COLORS.primary,
-    marginBottom: 12,
-  },
-  cidFullText: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: COLORS.primary,
-    marginTop: 12,
-    letterSpacing: 4,
-  },
-  cidSubNote: {
-    fontSize: 12,
-    color: COLORS.textMuted,
-    marginTop: 4,
-  },
-
-  // ========== SUCCESS CIRCLE ==========
+  safeArea: { flex: 1, backgroundColor: COLORS?.white || '#fff' },
+  safeAreaWhite: { flex: 1, backgroundColor: COLORS?.white || '#fff' },
+  safeAreaDark: { flex: 1, backgroundColor: '#0f172a' },
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 40, flexGrow: 1 },
+  centeredContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
   successCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: COLORS.successLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: COLORS.success,
+      width: 80, height: 80, borderRadius: 40, backgroundColor: '#dcfce7', alignItems: 'center', justifyContent: 'center', marginBottom: 20
   },
-  checkMark: {
-    fontSize: 38,
-    color: COLORS.success,
-  },
-
-  // ========== PROFILE CARD ==========
-  profileCard: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    backgroundColor: COLORS.primaryLight,
-    borderRadius: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  avatarCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: COLORS.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-  },
-  avatarIcon: {
-    fontSize: 32,
-  },
-  profileName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  profileCID: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: COLORS.primary,
-    letterSpacing: 3,
-    marginTop: 4,
-  },
-  profileSub: {
-    fontSize: 13,
-    color: COLORS.textMuted,
-    marginTop: 4,
-  },
-
-  // ========== ACTION ROWS ==========
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    backgroundColor: COLORS.white,
-    borderRadius: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  actionIcon: {
-    fontSize: 18,
-    marginRight: 14,
-  },
-  actionLabel: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: COLORS.text,
-  },
-  actionBadge: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.primary,
-  },
-  actionArrow: {
-    fontSize: 22,
-    color: COLORS.textMuted,
-  },
-
-  // ========== QR CARD ==========
-  qrCard: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    backgroundColor: COLORS.white,
-    borderRadius: 24,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  qrWrapper: {
-    padding: 16,
-    backgroundColor: COLORS.white,
-    borderRadius: 16,
-    marginVertical: 16,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
-  },
-  qrInner: {
-    position: 'relative',
-  },
-  qrOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qrLockBadge: {
-    backgroundColor: COLORS.white,
-    borderRadius: 20,
-    padding: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  qrLockIcon: {
-    fontSize: 20,
-  },
-  orShareText: {
-    textAlign: 'center',
-    fontSize: 14,
-    color: COLORS.textMuted,
-    marginTop: 14,
-  },
-  orShareCID: {
-    fontWeight: '800',
-    color: COLORS.primary,
-    letterSpacing: 2,
-  },
-
-  // ========== SCANNER VIEWPORT ==========
-  scannerViewport: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scannerFrame: {
-    width: SCREEN_W * 0.6,
-    height: SCREEN_W * 0.6,
-    position: 'relative',
-  },
-  scannerFrameGreen: {
-    width: SCREEN_W * 0.6,
-    height: SCREEN_W * 0.6,
-    position: 'relative',
-  },
-  scannerCorner: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 2,
-  },
-  scanLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: COLORS.success,
-    opacity: 0.8,
-  },
-  scanSuccessDot: {
-    position: 'absolute',
-    bottom: -20,
-    left: '50%',
-    marginLeft: -16,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.success,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scannerBottom: {
-    backgroundColor: COLORS.dark,
-    paddingHorizontal: 28,
-    paddingTop: 24,
-    paddingBottom: 40,
-    alignItems: 'center',
-  },
-  scannerHint: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.white,
-    textAlign: 'center',
-  },
-  scannerSub: {
-    fontSize: 13,
-    color: COLORS.textMuted,
-    marginTop: 6,
-    textAlign: 'center',
-  },
-  scannerOr: {
-    fontSize: 13,
-    color: COLORS.textMuted,
-    marginTop: 16,
-    marginBottom: 10,
-  },
-  enterCIDBtn: {
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-  },
-  enterCIDText: {
-    color: COLORS.white,
-    fontSize: 15,
-    fontWeight: '600',
-    letterSpacing: 2,
-  },
-
-  // ========== BOTTOM SHEET ==========
-  bottomSheet: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 36,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 12,
-  },
-  e2eeHint: {
-    backgroundColor: COLORS.successLight,
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: COLORS.success,
-  },
-  e2eeHintText: {
-    fontSize: 13,
-    color: COLORS.success,
-  },
-  cancelText: {
-    fontSize: 15,
-    color: COLORS.textMuted,
-    fontWeight: '500',
-    textAlign: 'center',
-    marginTop: 16,
-  },
-
-  // ========== TAB ROW ==========
-  tabRow: {
-    flexDirection: 'row',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginBottom: 24,
-    overflow: 'hidden',
-    backgroundColor: COLORS.slate100,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  tabActive: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-  },
-  tabText: {
-    fontSize: 14,
-    color: COLORS.textMuted,
-    fontWeight: '500',
-  },
-  tabTextActive: {
-    color: COLORS.white,
-    fontWeight: '700',
-  },
-
-  // ========== SECONDARY BUTTON ==========
-  secondaryActionBtn: {
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    marginBottom: 12,
-    backgroundColor: COLORS.white,
-  },
-  secondaryActionText: {
-    color: COLORS.primary,
-    fontSize: 15,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-  },
-
-  // ========== CID INPUT ==========
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textMuted,
-    marginBottom: 12,
-  },
-  cidInputRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  cidInputCell: {
-    flex: 1,
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: COLORS.primaryLight,
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-    textAlign: 'center',
-    fontSize: 22,
-    fontWeight: '800',
-    color: COLORS.primary,
-  },
-  cidInputCellActive: {
-    borderStyle: 'dashed',
-    borderColor: COLORS.textMuted,
-    backgroundColor: COLORS.background,
-  },
-
-  // ========== PASTE ROW ==========
-  pasteRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    backgroundColor: COLORS.slate100,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  pasteIcon: {
-    fontSize: 16,
-    marginRight: 10,
-  },
-  pasteText: {
-    fontSize: 14,
-    color: COLORS.textMuted,
-  },
-
-  // ========== BOXES ==========
-  warningBox: {
-    backgroundColor: COLORS.warningLight,
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#FCD34D',
-  },
-  warningText: {
-    fontSize: 13,
-    color: '#92400E',
-    lineHeight: 19,
-    textAlign: 'center',
-  },
-
-  infoBox: {
-    backgroundColor: COLORS.primaryLight,
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-  },
-  infoBoxText: {
-    fontSize: 13,
-    color: COLORS.primary,
-    lineHeight: 19,
-    textAlign: 'center',
-  },
-
-  hintBox: {
-    backgroundColor: COLORS.primaryLight,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-  },
-  hintText: {
-    fontSize: 13,
-    color: COLORS.primary,
-    lineHeight: 19,
-  },
-
-  // ========== E2EE BADGE ==========
-  e2eeBadge: {
-    flexDirection: 'row',
-    gap: 4,
-    backgroundColor: COLORS.successLight,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: COLORS.success,
-  },
-  e2eeLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.success,
-  },
+  checkMark: { fontSize: 40, color: '#16a34a' },
+  headingLg: { fontSize: 26, fontWeight: '800', color: COLORS?.textPrimary || '#0f172a', textAlign: 'center' },
+  cidCard: { marginTop: 30, paddingVertical: 30, paddingHorizontal: 20, backgroundColor: COLORS?.primaryLight || '#eff6ff', borderRadius: 16, alignItems: 'center' },
+  cidCardLabel: { fontSize: 12, color: COLORS?.primary || '#3b82f6', marginBottom: 10, fontWeight: '700', letterSpacing: 1.5 },
+  cidFullText: { fontSize: 34, letterSpacing: 6, fontWeight: '800', color: COLORS?.primary || '#3b82f6' },
+  cidSubNote: { fontSize: 13, color: COLORS?.textSecondary || '#64748b', marginTop: 12 },
+  iconContainer: { width: 90, height: 90, borderRadius: 24, backgroundColor: COLORS?.primary || '#3b82f6', alignItems: 'center', justifyContent: 'center', marginBottom: 30 },
+  iconEmoji: { fontSize: 40 },
+  spinner: { width: 40, height: 40, borderRadius: 20, borderWidth: 4, borderColor: COLORS?.primary || '#3b82f6', borderTopColor: 'transparent', marginTop: 40 },
+  cryptoNote: { fontSize: 13, color: COLORS?.textSecondary || '#64748b', marginTop: 30, textAlign: 'center' },
+  subText: { fontSize: 16, color: COLORS?.textSecondary || '#64748b', textAlign: 'center', marginTop: 12, lineHeight: 22 },
+  profileCard: { padding: 24, alignItems: 'center', backgroundColor: COLORS?.cardBg || '#f8fafc', borderRadius: 16, marginBottom: 24, borderWidth: 1, borderColor: COLORS?.border || '#e2e8f0' },
+  avatarCircle: { width: 70, height: 70, borderRadius: 35, backgroundColor: COLORS?.primaryLight || '#eff6ff', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  avatarIcon: { fontSize: 32 },
+  profileName: { fontSize: 20, fontWeight: '700', color: COLORS?.textPrimary || '#0f172a' },
+  profileCID: { fontSize: 16, color: COLORS?.primary || '#3b82f6', marginTop: 4, fontWeight: '600' },
+  profileSub: { fontSize: 14, color: COLORS?.textSecondary || '#64748b', marginTop: 8 },
+  actionRow: { flexDirection: 'row', alignItems: 'center', padding: 18, backgroundColor: COLORS?.cardBg || '#f8fafc', borderRadius: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS?.border || '#e2e8f0' },
+  actionIcon: { fontSize: 22, marginRight: 16 },
+  actionLabel: { flex: 1, fontSize: 16, fontWeight: '600', color: COLORS?.textPrimary || '#0f172a' },
+  actionBadge: { fontSize: 14, fontWeight: '700', color: COLORS?.primary || '#3b82f6', marginRight: 12 },
+  actionArrow: { fontSize: 20, color: COLORS?.textMuted || '#94a3b8' },
+  warningBox: { padding: 16, backgroundColor: '#fef2f2', borderRadius: 12, marginTop: 30, borderWidth: 1, borderColor: '#fecaca' },
+  warningText: { fontSize: 14, color: '#dc2626', lineHeight: 20, fontWeight: '500' },
+  infoBox: { padding: 16, backgroundColor: '#eff6ff', borderRadius: 12, marginTop: 16, borderWidth: 1, borderColor: '#bfdbfe' },
+  infoBoxText: { fontSize: 14, color: '#2563eb', lineHeight: 20 },
+  qrWrapper: { alignItems: 'center', marginVertical: 30 },
+  qrInner: { padding: 24, backgroundColor: '#fff', borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 15, elevation: 8 },
+  qrOverlay: { position: 'absolute', top: '50%', left: '50%', width: 48, height: 48, marginTop: -24, marginLeft: -24, backgroundColor: '#fff', borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  qrLockBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS?.primaryLight || '#eff6ff', alignItems: 'center', justifyContent: 'center' },
+  qrLockIcon: { fontSize: 18 },
+  qrCard: { alignItems: 'center' },
+  scannerViewport: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  scannerFrame: { width: width * 0.7, height: width * 0.7, borderWidth: 2, borderColor: 'rgba(255,255,255,0.2)' },
+  scannerCorner: { position: 'absolute', width: 40, height: 40, borderColor: COLORS?.primary || '#3b82f6', borderWidth: 4 },
+  scanLine: { width: '100%', height: 2, backgroundColor: COLORS?.primary || '#3b82f6' },
+  scannerBottom: { position: 'absolute', bottom: 60, width: '100%', alignItems: 'center' },
+  scannerHint: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 8 },
+  scannerSub: { fontSize: 14, color: '#94a3b8', marginBottom: 30 },
+  scannerOr: { fontSize: 14, color: '#94a3b8', marginVertical: 20 },
+  enterCIDBtn: { paddingVertical: 16, paddingHorizontal: 30, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 100 },
+  enterCIDText: { fontSize: 16, fontWeight: '600', color: '#fff', letterSpacing: 1 },
+  scannerFrameGreen: { width: width * 0.7, height: width * 0.7, borderWidth: 2, borderColor: 'rgba(16, 185, 129, 0.5)' },
+  scanSuccessDot: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#10b981', position: 'absolute', top: '50%', left: '50%', marginLeft: -30, marginTop: -30, alignItems: 'center', justifyContent: 'center' },
+  bottomSheet: { position: 'absolute', bottom: 0, width: '100%', backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  e2eeHint: { padding: 16, backgroundColor: COLORS?.background || '#f1f5f9', borderRadius: 12, marginTop: 20 },
+  e2eeHintText: { fontSize: 13, color: COLORS?.textSecondary || '#64748b', textAlign: 'center', lineHeight: 18 },
+  cancelText: { fontSize: 16, fontWeight: '600', color: COLORS?.textMuted || '#94a3b8', textAlign: 'center', marginTop: 24 },
+  tabRow: { flexDirection: 'row', backgroundColor: COLORS?.background || '#f1f5f9', borderRadius: 12, padding: 4, marginBottom: 24 },
+  tab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 8 },
+  tabActive: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, elevation: 2 },
+  tabText: { fontSize: 15, color: COLORS?.textSecondary || '#64748b', fontWeight: '600' },
+  tabTextActive: { color: COLORS?.textPrimary || '#0f172a' },
+  fieldLabel: { fontSize: 14, fontWeight: '600', color: COLORS?.textPrimary || '#0f172a', marginBottom: 12 },
+  cidInputRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
+  cidInputCell: { width: (width - 40 - 50) / 6, height: 55, borderWidth: 1.5, borderColor: COLORS?.border || '#e2e8f0', borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS?.inputBg || '#f8fafc' },
+  pasteRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 30 },
+  pasteIcon: { fontSize: 20, marginRight: 10 },
+  pasteText: { fontSize: 16, fontWeight: '600', color: COLORS?.primary || '#3b82f6' },
+  hintBox: { padding: 16, backgroundColor: COLORS?.background || '#f1f5f9', borderRadius: 12 },
+  hintText: { fontSize: 14, color: COLORS?.textSecondary || '#64748b', textAlign: 'center', lineHeight: 20 },
+  orShareCID: { marginTop: 24, alignItems: 'center' },
+  orShareText: { fontSize: 16, fontWeight: '600', color: COLORS?.primary || '#3b82f6' },
+  secondaryActionBtn: { paddingVertical: 16, borderRadius: 100, borderWidth: 1.5, borderColor: COLORS?.border || '#e2e8f0', alignItems: 'center', marginTop: 16 },
+  secondaryActionText: { fontSize: 16, color: COLORS?.textPrimary || '#0f172a', fontWeight: '700' },
 });

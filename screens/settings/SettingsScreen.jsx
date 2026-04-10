@@ -13,6 +13,7 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useCIDContext } from '../../context/CIDContext';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
 
 const { width: screenWidth } = Dimensions.get('screen');
@@ -25,13 +26,13 @@ export default function SettingsScreen({ navigation }) {
   const [stealthMode, setStealthMode] = useState(true);
   const [defaultTimer, setDefaultTimer] = useState('1h');
 
-  // User profile data (would come from context/state)
+  const { userNickname, userAvatar, userCID } = useCIDContext();
+
   const user = {
-    name: 'Phantom_X',
-    nickname: 'NightHawk_7',
+    nickname: userNickname || 'Locksy_User',
     verified: true,
-    cid: 'CID: Hidden from all',
-    avatar: '👤',
+    cid: userCID ? `CID: ${userCID}` : 'CID: Hidden from all',
+    avatar: userAvatar,
   };
 
   return (
@@ -57,7 +58,11 @@ export default function SettingsScreen({ navigation }) {
         {/* Profile Card */}
         <View style={styles.profileCard}>
           <View style={styles.profileAvatar}>
-            <Text style={styles.avatarText}>{user.avatar}</Text>
+            {user.avatar ? (
+              <Image source={{ uri: user.avatar }} style={{ width: 60, height: 60, borderRadius: 30 }} />
+            ) : (
+              <Text style={styles.avatarText}>{user.nickname[0]?.toUpperCase() || '?'}</Text>
+            )}
             <View style={styles.verifiedBadge}>
               <MaterialCommunityIcons name="check-circle" size={12} color={COLORS.white} />
             </View>
@@ -67,7 +72,10 @@ export default function SettingsScreen({ navigation }) {
               <Text style={styles.profileName}>{user.nickname}</Text>
               <Text style={styles.profileCid}>{user.cid}</Text>
             </View>
-            <TouchableOpacity style={styles.profileEdit}>
+            <TouchableOpacity 
+              style={styles.profileEdit}
+              onPress={() => navigation.navigate('EditNickname')}
+            >
               <Ionicons name="pencil" size={16} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
@@ -90,12 +98,12 @@ export default function SettingsScreen({ navigation }) {
 
           <TouchableOpacity 
             style={styles.settingRow}
-            onPress={() => Alert.alert('Change Photo', 'Select or take a new profile photo')}
+            onPress={() => navigation.navigate('EditNickname')}
           >
             <View style={[styles.icon, { backgroundColor: COLORS.primaryLight }]}>
               <MaterialCommunityIcons name="image-plus" size={20} color={COLORS.primary} />
             </View>
-            <Text style={styles.settingLabel}>Change Photo</Text>
+            <Text style={styles.settingLabel}>Edit Profile & Photo</Text>
             <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
           </TouchableOpacity>
 

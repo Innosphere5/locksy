@@ -11,10 +11,12 @@ import {
   Alert,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { useCIDContext } from '../context/CIDContext';
 import { COLORS, SPACING, RADIUS } from './theme';
 
 export default function SetupProfilePhoto({ navigation, route }) {
   const { nickname = 'User', cid = 'XXXXXX' } = route?.params || {};
+  const { updateNickname, updateAvatar } = useCIDContext();
   const [photo, setPhoto] = useState(null);
   const [loading, setLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -100,7 +102,10 @@ export default function SetupProfilePhoto({ navigation, route }) {
   };
 
   const handleEnterLocksy = () => {
-    // Navigate to main app (adjust route name as needed)
+    // Save globally
+    updateNickname(nickname);
+    if (photo) updateAvatar(photo);
+
     Alert.alert(
       '🎉 Welcome to Locksy!',
       `Your account is ready, ${nickname}.\n\nYour CID: ${cid}`,
@@ -108,7 +113,7 @@ export default function SetupProfilePhoto({ navigation, route }) {
         {
           text: 'Enter',
           onPress: () => {
-            TODO: navigation.replace('Chats')
+             navigation.replace('Chats');
           },
         },
       ]
