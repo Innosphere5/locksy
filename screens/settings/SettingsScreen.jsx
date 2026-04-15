@@ -31,7 +31,8 @@ export default function SettingsScreen({ navigation }) {
   const user = {
     nickname: userNickname || 'Locksy_User',
     verified: true,
-    cid: userCID ? `CID: ${userCID}` : 'CID: Hidden from all',
+    // Per CID Architecture: CID is NEVER exposed in the UI — hidden from all
+    cid: 'CID: Hidden from all',
     avatar: userAvatar,
   };
 
@@ -142,6 +143,24 @@ export default function SettingsScreen({ navigation }) {
               <MaterialCommunityIcons name="shield-check" size={20} color={COLORS.primary} />
             </View>
             <Text style={styles.settingLabel}>Security Center</Text>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.settingRow}
+            onPress={() => {
+              // Verify CID integrity: re-decrypt and check SHA-256 hash
+              Alert.alert(
+                '🔍 CID Integrity Check',
+                'To verify your CID integrity, unlock the app with your master password. The SHA-256 hash will be re-verified.',
+                [{ text: 'OK' }]
+              );
+            }}
+          >
+            <View style={[styles.icon, { backgroundColor: COLORS.success + '15' }]}>
+              <MaterialCommunityIcons name="shield-key" size={20} color={COLORS.success} />
+            </View>
+            <Text style={styles.settingLabel}>Verify CID Integrity</Text>
             <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
           </TouchableOpacity>
         </View>

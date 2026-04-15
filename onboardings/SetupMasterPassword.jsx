@@ -11,8 +11,9 @@ import {
   Platform,
   ScrollView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
+import { useCIDContext } from '../context/CIDContext';
 import { COLORS, SPACING, RADIUS } from './theme';
 
 function getPasswordStrength(password) {
@@ -30,12 +31,14 @@ function getPasswordStrength(password) {
 }
 
 export default function SetupMasterPassword({ navigation }) {
+  const { initializeCID, userCID } = useCIDContext();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [confirmFocused, setConfirmFocused] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   const strength = getPasswordStrength(password);
   const barWidth = useRef(new Animated.Value(0)).current;
@@ -67,13 +70,26 @@ export default function SetupMasterPassword({ navigation }) {
       Alert.alert('Weak Password', 'Please create a stronger password.');
       return;
     }
-    
+
+    setIsLoading(true);
+
+    // Briefly wait to allow the UI to update and show the loading spinner
+    // before the heavy synchronous PBKDF2 calculation starts.
+    await new Promise(resolve => setTimeout(resolve, 150));
+
     try {
-      await SecureStore.setItemAsync('master_password', password);
+      // CID Architecture: derive PBKDF2 key, generate CID, encrypt, store.
+      // Password is NEVER stored — only used to produce the AES-256 key.
+      await initializeCID(password, userCID || undefined);
       navigation.navigate('SetupNickname');
     } catch (error) {
-      console.error('Error saving password:', error);
-      Alert.alert('Storage Error', 'Could not save master password securely.');
+      console.error('[SetupMasterPassword] initializeCID failed:', error);
+      Alert.alert(
+        'Setup Error',
+        'Could not initialize secure identity. Please try again.'
+      );
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -209,12 +225,20 @@ export default function SetupMasterPassword({ navigation }) {
           <TouchableOpacity
             style={[
               styles.ctaBtn,
-              (!password || !confirmPassword) && styles.ctaBtnDisabled,
+              (!password || !confirmPassword || isLoading) && styles.ctaBtnDisabled,
             ]}
             onPress={handleContinue}
             activeOpacity={0.85}
+            disabled={isLoading}
           >
-            <Text style={styles.ctaText}>Continue</Text>
+            {isLoading ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <ActivityIndicator color={COLORS.white} size="small" />
+                <Text style={styles.ctaText}>Securing Identity...</Text>
+              </View>
+            ) : (
+              <Text style={styles.ctaText}>Continue</Text>
+            )}
           </TouchableOpacity>
         </View>
       </Animated.View>

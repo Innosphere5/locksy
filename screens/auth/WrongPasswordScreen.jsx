@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+// screens/auth/WrongPasswordScreen.jsx
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,50 +8,92 @@ import {
   StatusBar,
   Vibration,
   Animated,
+  TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
+import { useCIDContext } from '../../context/CIDContext';
+import { nukeAllData } from '../../utils/secureStorage';
 import PinPad from '../common/PinPad';
 
-const PIN_LENGTH = 3;
-const CORRECT_PIN = '999'; // demo — nearly impossible
+const PIN_LENGTH = 4;
 
+/**
+ * WrongPasswordScreen — CID Architecture Implementation
+ *
+ * Shown after the first or second wrong password attempt.
+ * Reads the REAL fail count from CIDContext (not hardcoded).
+ *
+ * On pin submit → calls verifyAndUnlock() again:
+ *   success      → Chats
+ *   wrong_password → shake, increment counter (already done in context)
+ *   nuke         → ALL DATA DESTROYED → navigate AccessDenied
+ *
+ * Per design: "3 Wrong Passwords = ALL DATA DESTROYED — No recovery"
+ */
 export default function WrongPasswordScreen({ navigation }) {
-  const [pin, setPin] = useState('');
-  const [shake] = useState(new Animated.Value(0));
-  // Demo: already 2 of 3 attempts used
-  const attemptsUsed = 2;
-  const maxAttempts = 3;
+  const { verifyAndUnlock, failCount } = useCIDContext();
+  const [pin,       setPin]       = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [shake]                   = useState(new Animated.Value(0));
+
+  const maxAttempts     = 3;
+  const attemptsUsed    = failCount;
+  const attemptsLeft    = Math.max(0, maxAttempts - attemptsUsed);
+  const isFinalAttempt  = attemptsLeft <= 1;
 
   const triggerShake = () => {
     Vibration.vibrate([0, 80, 60, 80]);
     Animated.sequence([
-      Animated.timing(shake, { toValue: 12, duration: 55, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 12,  duration: 55, useNativeDriver: true }),
       Animated.timing(shake, { toValue: -12, duration: 55, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 8, duration: 55, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: -8, duration: 55, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 0, duration: 55, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 8,   duration: 55, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: -8,  duration: 55, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 0,   duration: 55, useNativeDriver: true }),
     ]).start();
   };
 
-  const handleKey = (key) => {
+  const handleKey = async (key) => {
+    if (isLoading) return;
+
     if (key === 'del') {
-      setPin((p) => p.slice(0, -1));
+      setPin(p => p.slice(0, -1));
       return;
     }
     if (pin.length >= PIN_LENGTH) return;
+
     const newPin = pin + key;
     setPin(newPin);
 
     if (newPin.length === PIN_LENGTH) {
-      setTimeout(() => {
-        if (newPin === CORRECT_PIN) {
-          navigation.replace('Chats');
-        } else {
-          triggerShake();
-          setPin('');
-          // 3rd wrong attempt → data wipe
-          navigation.replace('AccessDenied');
+      setIsLoading(true);
+      await new Promise(r => setTimeout(r, 150)); // brief visual feedback
+
+      try {
+        const result = await verifyAndUnlock(newPin);
+
+        switch (result) {
+          case 'success':
+            navigation.replace('Chats');
+            break;
+
+          case 'nuke':
+            // 3 wrong attempts: all data nuked — go to AccessDenied
+            navigation.replace('AccessDenied');
+            break;
+
+          case 'wrong_password':
+          default:
+            triggerShake();
+            setPin('');
+            break;
         }
-      }, 150);
+      } catch (error) {
+        console.error('[WrongPassword] Error:', error);
+        triggerShake();
+        setPin('');
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -68,19 +111,17 @@ export default function WrongPasswordScreen({ navigation }) {
         <Text style={styles.title}>Wrong Password</Text>
 
         {/* Attempt Banner */}
-        <View style={styles.attemptBanner}>
+        <View style={[styles.attemptBanner, isFinalAttempt && styles.attemptBannerCritical]}>
           <Text style={styles.attemptTitle}>
             {attemptsUsed} of {maxAttempts} attempts used
           </Text>
           <Text style={styles.attemptSub}>
-            {maxAttempts - attemptsUsed} attempt left before data wipe
+            {attemptsLeft} attempt{attemptsLeft !== 1 ? 's' : ''} left before data wipe
           </Text>
         </View>
 
         {/* Dots */}
-        <Animated.View
-          style={[styles.dotsRow, { transform: [{ translateX: shake }] }]}
-        >
+        <Animated.View style={[styles.dotsRow, { transform: [{ translateX: shake }] }]}>
           {Array.from({ length: PIN_LENGTH }).map((_, i) => (
             <View
               key={i}
@@ -92,11 +133,30 @@ export default function WrongPasswordScreen({ navigation }) {
           ))}
         </Animated.View>
 
-        {/* Keypad */}
-        <PinPad onKey={handleKey} />
+        {/* Loading indicator */}
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator color="#EF4444" size="large" />
+            <Text style={styles.loadingText}>Verifying...</Text>
+          </View>
+        ) : (
+          <PinPad onKey={handleKey} />
+        )}
 
         {/* Warning */}
-        <Text style={styles.warnText}>⚠️ Next failure erases all data</Text>
+        {isFinalAttempt && (
+          <Text style={styles.warnText}>
+            ⚠️ Next failure will permanently erase all data
+          </Text>
+        )}
+
+        {/* Back to password entry */}
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.backText}>Use password instead</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -134,6 +194,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 28,
     width: '84%',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  attemptBannerCritical: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#EF4444',
+    borderWidth: 2,
   },
   attemptTitle: {
     fontSize: 15,
@@ -156,11 +223,32 @@ const styles = StyleSheet.create({
     borderRadius: 7,
   },
   dotFilled: { backgroundColor: '#EF4444' },
-  dotEmpty: { backgroundColor: '#E2E8F0' },
+  dotEmpty:  { backgroundColor: '#E2E8F0' },
+  loadingContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#94A3B8',
+  },
   warnText: {
     fontSize: 13,
     color: '#EF4444',
-    marginTop: 24,
-    fontWeight: '500',
+    marginTop: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingHorizontal: 24,
+  },
+  backBtn: {
+    marginTop: 'auto',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+  },
+  backText: {
+    fontSize: 14,
+    color: '#3B82F6',
+    fontWeight: '600',
   },
 });

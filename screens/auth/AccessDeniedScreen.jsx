@@ -1,3 +1,4 @@
+// screens/auth/AccessDeniedScreen.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
@@ -8,13 +9,56 @@ import {
   Animated,
   Easing,
 } from 'react-native';
+import { nukeAllData } from '../../utils/secureStorage';
 
+/**
+ * AccessDeniedScreen — CID Architecture Implementation
+ *
+ * Triggered after 3 wrong password attempts.
+ * Calls nukeAllData() on mount to ACTUALLY destroy all encrypted storage.
+ *
+ * Per design: "3 Wrong Passwords = ALL DATA DESTROYED — No recovery"
+ *
+ * Previous implementation only showed an animation — nothing was actually deleted.
+ * This version performs the real SecureStore wipe, then navigates to Onboarding.
+ */
 export default function AccessDeniedScreen({ navigation }) {
-  const [percent, setPercent] = useState(60);
-  const progress = useRef(new Animated.Value(0.6)).current;
+  const [percent,    setPercent]    = useState(0);
+  const [wipeStatus, setWipeStatus] = useState('Initializing secure erase...');
+  const progress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Animate wipe from 60% to 100%
+    let isMounted = true;
+
+    const executeWipe = async () => {
+      try {
+        // Step 1: Announce wipe start
+        if (isMounted) setWipeStatus('Destroying encryption keys...');
+
+        // Step 2: Actually nuke all data from SecureStore
+        await nukeAllData();
+        if (isMounted) setWipeStatus('Erasing encrypted CID bundle...');
+
+        // Brief pause for UI update
+        await new Promise(r => setTimeout(r, 400));
+        if (isMounted) setWipeStatus('Removing integrity hashes...');
+
+        await new Promise(r => setTimeout(r, 400));
+        if (isMounted) setWipeStatus('Clearing all local data...');
+
+        await new Promise(r => setTimeout(r, 400));
+        if (isMounted) setWipeStatus('Complete. All data destroyed.');
+
+      } catch (error) {
+        console.error('[AccessDenied] Wipe error:', error);
+        // Even on error, try to navigate to onboarding
+      }
+    };
+
+    // Run data wipe immediately on mount
+    executeWipe();
+
+    // Animate progress bar from 0% to 100% over 4 seconds
     const anim = Animated.timing(progress, {
       toValue: 1,
       duration: 4000,
@@ -23,24 +67,27 @@ export default function AccessDeniedScreen({ navigation }) {
     });
 
     const listener = progress.addListener(({ value }) => {
-      setPercent(Math.round(value * 100));
+      if (isMounted) setPercent(Math.round(value * 100));
     });
 
     anim.start(({ finished }) => {
-      if (finished) {
-        // After wipe complete, navigate to onboarding/splash
-        setTimeout(() => navigation.replace('Splash'), 600);
+      if (finished && isMounted) {
+        // Navigate to onboarding after wipe animation completes
+        setTimeout(() => {
+          if (isMounted) navigation.replace('Onboarding');
+        }, 800);
       }
     });
 
     return () => {
+      isMounted = false;
       progress.removeListener(listener);
       anim.stop();
     };
   }, []);
 
   const barWidth = progress.interpolate({
-    inputRange: [0, 1],
+    inputRange:  [0, 1],
     outputRange: ['0%', '100%'],
   });
 
@@ -67,13 +114,26 @@ export default function AccessDeniedScreen({ navigation }) {
 
         <Text style={styles.percentText}>WIPING... {percent}%</Text>
 
+        {/* Status message */}
+        <View style={styles.statusBox}>
+          <Text style={styles.statusText}>{wipeStatus}</Text>
+        </View>
+
         <Text style={styles.detailText}>
-          All messages, contacts, vault{'\n'}and keys are being erased.
+          All messages, contacts, vault{'\n'}and encryption keys are being erased.
         </Text>
+
+        {/* Architecture note */}
+        <View style={styles.archNote}>
+          <Text style={styles.archNoteText}>
+            🛡️ Zero Server Trust · Local-only storage{'\n'}
+            No cloud backup · No recovery possible
+          </Text>
+        </View>
 
         {/* Footer watermark */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>LOCKSY · SECURE ERASE</Text>
+          <Text style={styles.footerText}>LOCKSY · SECURE ERASE · AES-256-GCM</Text>
         </View>
       </View>
     </SafeAreaView>
@@ -131,13 +191,44 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#EF4444',
     letterSpacing: 1.5,
-    marginBottom: 32,
+    marginBottom: 20,
+  },
+  statusBox: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    width: '100%',
+  },
+  statusText: {
+    fontSize: 13,
+    color: '#DC2626',
+    textAlign: 'center',
+    fontWeight: '500',
   },
   detailText: {
     fontSize: 14,
     color: '#94A3B8',
     textAlign: 'center',
     lineHeight: 22,
+    marginBottom: 24,
+  },
+  archNote: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    width: '100%',
+  },
+  archNoteText: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   footer: {
     position: 'absolute',

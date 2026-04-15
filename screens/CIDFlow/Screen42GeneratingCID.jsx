@@ -12,6 +12,7 @@ import {
 import { COLORS } from '../../theme/colors';
 import { CIDFlowStyles } from '../common/CIDFlowStyles';
 import { useCIDContext } from '../../context/CIDContext';
+import { generateCID } from '../../utils/cryptoEngine';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -51,17 +52,9 @@ const Screen42GeneratingCID = ({ onNext }) => {
       }
     });
 
-    // Auto-generate CID and navigate after 2.8 seconds
+    // Generate CID using CSPRNG (crypto.getRandomValues) — NOT Math.random()
+    // Stored in context memory only; SetupMasterPassword will encrypt + persist.
     const timer = setTimeout(() => {
-      const generateCID = () => {
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-        let cid = '';
-        for (let i = 0; i < 6; i++) {
-          cid += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        return cid;
-      };
-      
       const newCID = generateCID();
       setUserCID(newCID);
       onNext();

@@ -1,3 +1,6 @@
+// ⚠️ MUST be the very first import — polyfills crypto.getRandomValues() for Hermes
+import 'react-native-get-random-values';
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';

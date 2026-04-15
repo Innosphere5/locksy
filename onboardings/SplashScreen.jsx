@@ -7,7 +7,7 @@ import {
   Animated,
   Dimensions,
 } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
+import { hasCIDBundle } from '../utils/secureStorage';
 import { COLORS, SPACING, RADIUS } from './theme';
 
 const { width, height } = Dimensions.get('window');
@@ -47,9 +47,10 @@ export default function SplashScreen({ navigation }) {
 
     const checkAuthStatus = async () => {
       try {
-        const storedPassword = await SecureStore.getItemAsync('master_password');
+        // Check for encrypted CID bundle (new schema) — not plaintext master_password
+        const hasBundle = await hasCIDBundle();
         setTimeout(() => {
-          if (storedPassword) {
+          if (hasBundle) {
             navigation.replace('WelcomeBack');
           } else {
             navigation.replace('Onboarding');

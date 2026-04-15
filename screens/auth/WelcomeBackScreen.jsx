@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+// screens/auth/WelcomeBackScreen.jsx
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,54 +12,91 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
+import { useCIDContext } from '../../context/CIDContext';
 
+/**
+ * WelcomeBackScreen — CID Architecture Implementation
+ *
+ * Login flow:
+ *  1. User enters password
+ *  2. verifyAndUnlock() is called:
+ *     - Loads encrypted CID bundle from storage
+ *     - Derives PBKDF2 key (600K iterations)
+ *     - Decrypts CID with AES-256-GCM
+ *     - Verifies SHA-256 integrity hash
+ *  3. 'success'      → navigate to Chats
+ *     'wrong_password' → shake + show remaining attempts → navigate WrongPassword if attempts > 1
+ *     'nuke'         → ALL DATA DESTROYED → navigate AccessDenied
+ *
+ * Password is NEVER stored and NEVER sent to a server.
+ */
 export default function WelcomeBackScreen({ navigation }) {
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const { verifyAndUnlock, failCount } = useCIDContext();
+  const [password,       setPassword]       = useState('');
+  const [showPassword,   setShowPassword]   = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
-  const [shake] = useState(new Animated.Value(0));
+  const [isLoading,      setIsLoading]      = useState(false);
+  const [shake]                             = useState(new Animated.Value(0));
+
+  const remainingAttempts = Math.max(0, 3 - failCount);
 
   const triggerShake = () => {
     Vibration.vibrate(100);
     Animated.sequence([
-      Animated.timing(shake, { toValue: 10, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 10,  duration: 60, useNativeDriver: true }),
       Animated.timing(shake, { toValue: -10, duration: 60, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 6, duration: 60, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: -6, duration: 60, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 0, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 6,   duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: -6,  duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 0,   duration: 60, useNativeDriver: true }),
     ]).start();
   };
 
   const handleLogin = async () => {
-    if (!password) return;
-    
+    if (!password || isLoading) return;
+
+    setIsLoading(true);
     try {
-      const storedPassword = await SecureStore.getItemAsync('master_password');
-      if (password === storedPassword) {
-        navigation.replace('Chats');
-      } else {
-        triggerShake();
-        setPassword('');
-        // Optional depending on if you want a separate screen or just feedback
-        // navigation.navigate('WrongPassword'); 
+      // Real PBKDF2 decrypt + SHA-256 integrity check
+      const result = await verifyAndUnlock(password);
+
+      switch (result) {
+        case 'success':
+          navigation.replace('Chats');
+          break;
+
+        case 'nuke':
+          // All data destroyed on 3rd wrong attempt
+          navigation.replace('AccessDenied');
+          break;
+
+        case 'wrong_password':
+        default:
+          triggerShake();
+          setPassword('');
+          // Navigate to WrongPassword screen for remaining-attempts UI
+          navigation.navigate('WrongPassword');
+          break;
       }
     } catch (error) {
-       console.error('Error getting stored password:', error);
-       triggerShake();
+      console.error('[WelcomeBack] Login error:', error);
+      triggerShake();
+      setPassword('');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" />
-      <KeyboardAvoidingView 
-        style={styles.keyboardView} 
+      <KeyboardAvoidingView
+        style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View style={styles.container}>
-          {/* Icon */}
+          {/* Logo */}
           <View style={styles.iconWrap}>
             <View style={styles.iconBox}>
               <Text style={styles.iconText}>Locksy</Text>
@@ -66,8 +104,23 @@ export default function WelcomeBackScreen({ navigation }) {
           </View>
 
           <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>Enter your password</Text>
+          <Text style={styles.subtitle}>Enter your master password to unlock</Text>
 
+          {/* Attempt warning banner */}
+          {failCount > 0 && (
+            <View style={styles.attemptBanner}>
+              <Text style={styles.attemptText}>
+                ⚠️ {failCount} of 3 attempts used · {remainingAttempts} remaining
+              </Text>
+              {remainingAttempts === 1 && (
+                <Text style={styles.nukeWarning}>
+                  Next wrong attempt will destroy all data
+                </Text>
+              )}
+            </View>
+          )}
+
+          {/* Password input */}
           <Animated.View style={[styles.inputContainer, { transform: [{ translateX: shake }] }]}>
             <View style={[styles.inputBox, passwordFocused && styles.inputBoxFocused]}>
               <Text style={styles.inputEmoji}>🗝️</Text>
@@ -80,39 +133,47 @@ export default function WelcomeBackScreen({ navigation }) {
                 onBlur={() => setPasswordFocused(false)}
                 autoCapitalize="none"
                 autoCorrect={false}
-                placeholder="Enter password"
+                placeholder="Enter master password"
                 placeholderTextColor="#94A3B8"
                 onSubmitEditing={handleLogin}
+                editable={!isLoading}
               />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeBtn}
+              >
                 <Text style={styles.eyeEmoji}>{showPassword ? '🙈' : '👁️'}</Text>
               </TouchableOpacity>
             </View>
           </Animated.View>
 
-          <TouchableOpacity 
-            style={[styles.loginBtn, !password && styles.loginBtnDisabled]} 
+          {/* Login button */}
+          <TouchableOpacity
+            style={[styles.loginBtn, (!password || isLoading) && styles.loginBtnDisabled]}
             onPress={handleLogin}
-            disabled={!password}
+            disabled={!password || isLoading}
             activeOpacity={0.8}
           >
-            <Text style={styles.loginText}>Login</Text>
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.loginText}>Unlock</Text>
+            )}
           </TouchableOpacity>
 
-          {/* Forgot Password */}
-          <TouchableOpacity 
-            style={styles.forgotBtn} 
-            onPress={() => navigation.navigate('SetupMasterPassword')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.forgotText}>Forgot password?</Text>
-          </TouchableOpacity>
+          {/* Loading hint */}
+          {isLoading && (
+            <Text style={styles.loadingHint}>
+              Deriving key (PBKDF2 · 600K iterations)...
+            </Text>
+          )}
 
-          {/* Biometrics */}
-          <TouchableOpacity style={styles.bioBtn} activeOpacity={0.8}>
-            <Text style={styles.bioEmoji}>☝️</Text>
-            <Text style={styles.bioText}>Use fingerprint instead</Text>
-          </TouchableOpacity>
+          {/* Security note */}
+          <View style={styles.securityNote}>
+            <Text style={styles.securityNoteText}>
+              🔒 AES-256-GCM · Zero Server · 100% Local
+            </Text>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -151,13 +212,37 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   subtitle: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#94A3B8',
-    marginBottom: 32,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  attemptBanner: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginBottom: 16,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  attemptText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#DC2626',
+    textAlign: 'center',
+  },
+  nukeWarning: {
+    fontSize: 12,
+    color: '#991B1B',
+    textAlign: 'center',
+    marginTop: 4,
+    fontWeight: '500',
   },
   inputContainer: {
     width: '100%',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   inputBox: {
     flexDirection: 'row',
@@ -174,63 +259,50 @@ const styles = StyleSheet.create({
     borderColor: '#3B82F6',
     backgroundColor: '#EFF6FF',
   },
-  inputEmoji: {
-    fontSize: 20,
-  },
+  inputEmoji: { fontSize: 20 },
   hiddenInput: {
     flex: 1,
     fontSize: 16,
     color: '#0F172A',
     letterSpacing: 1.5,
   },
-  eyeBtn: {
-    padding: 4,
-  },
-  eyeEmoji: {
-    fontSize: 18,
-  },
+  eyeBtn: { padding: 4 },
+  eyeEmoji: { fontSize: 18 },
   loginBtn: {
     width: '100%',
     backgroundColor: '#3B82F6',
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 12,
   },
-  loginBtnDisabled: {
-    opacity: 0.5,
-  },
+  loginBtnDisabled: { opacity: 0.5 },
   loginText: {
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  forgotBtn: {
-    paddingVertical: 10,
-    marginBottom: 10,
-    alignItems: 'center',
+  loadingHint: {
+    fontSize: 12,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginBottom: 12,
   },
-  forgotText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#3B82F6',
-  },
-  bioBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    borderRadius: 14,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    gap: 10,
+  securityNote: {
     marginTop: 'auto',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
     width: '100%',
-    justifyContent: 'center',
   },
-  bioEmoji: { fontSize: 22 },
-  bioText: {
-    fontSize: 15,
+  securityNoteText: {
+    fontSize: 12,
+    color: '#15803D',
+    textAlign: 'center',
     fontWeight: '600',
-    color: '#3B82F6',
+    letterSpacing: 0.3,
   },
 });
