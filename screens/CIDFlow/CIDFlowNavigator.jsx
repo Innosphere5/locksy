@@ -1,29 +1,31 @@
-import React, { useState } from 'react';
-import { View, ScrollView, TouchableOpacity, Text } from 'react-native';
-import { COLORS } from '../../theme/colors';
-import { useCIDContext } from '../../context/CIDContext';
+import React, { useState } from "react";
+import { View, ScrollView, TouchableOpacity, Text } from "react-native";
+import { COLORS } from "../../theme/colors";
+import { useCIDContext } from "../../context/CIDContext";
 
 // Import all screens
-import Screen42GeneratingCID from './Screen42GeneratingCID';
-import Screen43CIDGenerated from './Screen43CIDGenerated';
-import Screen44MyIdentity from './Screen44MyIdentity';
-import Screen45QRCode from './Screen45QRCode';
-import Screen46Scanner from './Screen46Scanner';
-import Screen47ContactFound from './Screen47ContactFound';
-import Screen48AddByCID from './Screen48AddByCID';
-import Screen49ContactAdded from './Screen49ContactAdded';
+import Screen42GeneratingCID from "./Screen42GeneratingCID";
+import Screen43CIDGenerated from "./Screen43CIDGenerated";
+import Screen44MyIdentity from "./Screen44MyIdentity";
+import Screen45QRCode from "./Screen45QRCode";
+import Screen46Scanner from "./Screen46Scanner";
+import Screen47ContactFound from "./Screen47ContactFound";
+import Screen48AddByCID from "./Screen48AddByCID";
+import Screen49ContactAdded from "./Screen49ContactAdded";
 
 /**
  * CID Flow Navigator
  * Orchestrates screens 42-49 (CID Identity Flow)
  * Handles navigation state, screen transitions, and context management
- * 
- * Flow:
- * 42 (Generating) → 43 (Generated) → 44 (Identity) → 45 (QR) 
- * → 46 (Scanner) → 48 (Enter CID) → 47 (Found) → 49 (Added)
+ *
+ * Flows:
+ * Onboarding: 42 (Generating) → 43 (Generated) → 44 (Identity) → 45 (QR)
+ * Add Contact: 44 (Identity) → 45 (QR) → 46 (Scanner) → 48 (Enter CID) → 47 (Found) → 49 (Added)
  */
-const CIDFlowNavigatorContent = ({ onFlowComplete }) => {
-  const [screen, setScreen] = useState(42);
+const CIDFlowNavigatorContent = ({ onFlowComplete, isAddContact = false }) => {
+  // Start at screen 44 (MyIdentity) if adding contact, otherwise screen 42 (Generating)
+  const initialScreen = isAddContact ? 44 : 42;
+  const [screen, setScreen] = useState(initialScreen);
 
   const handleScreenChange = (screenNumber) => {
     setScreen(screenNumber);
@@ -40,16 +42,8 @@ const CIDFlowNavigatorContent = ({ onFlowComplete }) => {
 
   // Screen components map
   const screens = {
-    42: (
-      <Screen42GeneratingCID
-        onNext={() => handleScreenChange(43)}
-      />
-    ),
-    43: (
-      <Screen43CIDGenerated
-        onNext={() => handleScreenChange(44)}
-      />
-    ),
+    42: <Screen42GeneratingCID onNext={() => handleScreenChange(43)} />,
+    43: <Screen43CIDGenerated onNext={() => handleScreenChange(44)} />,
     44: (
       <Screen44MyIdentity
         onNext={() => handleScreenChange(45)}
@@ -80,11 +74,7 @@ const CIDFlowNavigatorContent = ({ onFlowComplete }) => {
         onBack={() => handleScreenChange(46)}
       />
     ),
-    49: (
-      <Screen49ContactAdded
-        onNext={handleFlowComplete}
-      />
-    ),
+    49: <Screen49ContactAdded onNext={handleFlowComplete} />,
   };
 
   return (
@@ -98,11 +88,11 @@ const CIDFlowNavigatorContent = ({ onFlowComplete }) => {
           horizontal
           showsHorizontalScrollIndicator={false}
           style={{
-            position: 'absolute',
+            position: "absolute",
             bottom: 0,
             left: 0,
             right: 0,
-            backgroundColor: 'rgba(15,23,42,0.95)',
+            backgroundColor: "rgba(15,23,42,0.95)",
             paddingVertical: 6,
             maxHeight: 50,
           }}
@@ -120,7 +110,7 @@ const CIDFlowNavigatorContent = ({ onFlowComplete }) => {
                 backgroundColor:
                   screen === Number(s)
                     ? COLORS.primary
-                    : 'rgba(255,255,255,0.1)',
+                    : "rgba(255,255,255,0.1)",
                 minWidth: 40,
               }}
             >
@@ -128,7 +118,7 @@ const CIDFlowNavigatorContent = ({ onFlowComplete }) => {
                 style={{
                   color: COLORS.white,
                   fontSize: 11,
-                  fontWeight: '600',
+                  fontWeight: "600",
                 }}
               >
                 {s}
@@ -144,7 +134,7 @@ const CIDFlowNavigatorContent = ({ onFlowComplete }) => {
 /**
  * CIDFlowNavigator - Main Export
  * Wraps all screens with CIDProvider for context management
- * 
+ *
  * Can be called with route params:
  * - isOnboarding: boolean - if called from onboarding
  * - isAddContact: boolean - if called from chat screen to add contacts
@@ -154,21 +144,24 @@ const CIDFlowNavigator = ({ route, navigation }) => {
   const params = route?.params || {};
   const isOnboarding = params.isOnboarding || false;
   const isAddContact = params.isAddContact || false;
-  
+
   const handleFlowComplete = () => {
     if (navigation) {
       if (isOnboarding) {
         // From onboarding, go to next step
-        navigation.navigate('SetupMasterPassword');
+        navigation.navigate("SetupMasterPassword");
       } else {
         // From chat screen, go back
         navigation.goBack();
       }
     }
   };
-  
+
   return (
-    <CIDFlowNavigatorContent onFlowComplete={handleFlowComplete} />
+    <CIDFlowNavigatorContent
+      onFlowComplete={handleFlowComplete}
+      isAddContact={isAddContact}
+    />
   );
 };
 

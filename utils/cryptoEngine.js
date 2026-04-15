@@ -2,29 +2,30 @@
  * cryptoEngine.js — Locksy Secure Chat
  * ─────────────────────────────────────────────────────────────────
  * 100% Local Cryptographic Engine — Noble Implementation
- * Zero Server Trust — AES-256-GCM — PBKDF2 600K — ECDH P2P
+ * Zero Server Trust — AES-256-GCM — PBKDF2 10K — ECDH P2P
  *
  * This version uses the Noble suite of libraries for cross-platform
  * stability in React Native / Expo Hermes environments.
  *
- * Performance: 100K iterations of PBKDF2 in JS takes ~2-5s on mobile.
+ * Performance: 10K iterations of PBKDF2 in JS takes ~100-150ms on mobile.
  * ─────────────────────────────────────────────────────────────────
  */
 
-import { pbkdf2 } from '@noble/hashes/pbkdf2';
-import { sha256 } from '@noble/hashes/sha256';
-import { gcm } from '@noble/ciphers/aes';
-import { p256 } from '@noble/curves/p256';
-import { randomBytes } from '@noble/hashes/utils';
+import { pbkdf2 } from "@noble/hashes/pbkdf2";
+import { sha256 } from "@noble/hashes/sha256";
+import { gcm } from "@noble/ciphers/aes";
+import { p256 } from "@noble/curves/p256";
+import { randomBytes } from "@noble/hashes/utils";
 
 /**
  * Manual Base64 Implementation for React Native (Hermes)
  * Since btoa and atob are not available by default.
  */
-const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const CHARS =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 export const toBase64 = (bytes) => {
-  let result = '';
+  let result = "";
   let i;
   const l = bytes.length;
   for (i = 2; i < l; i += 3) {
@@ -36,12 +37,12 @@ export const toBase64 = (bytes) => {
   if (i === l + 1) {
     result += CHARS[bytes[i - 2] >> 2];
     result += CHARS[(bytes[i - 2] & 0x03) << 4];
-    result += '==';
+    result += "==";
   } else if (i === l) {
     result += CHARS[bytes[i - 2] >> 2];
     result += CHARS[((bytes[i - 2] & 0x03) << 4) | (bytes[i - 1] >> 4)];
     result += CHARS[(bytes[i - 1] & 0x0f) << 2];
-    result += '=';
+    result += "=";
   }
   return result;
 };
@@ -50,16 +51,17 @@ export const fromBase64 = (base64) => {
   const bytes = [];
   const charMap = {};
   for (let i = 0; i < CHARS.length; i++) charMap[CHARS[i]] = i;
-  
+
   // Remove padding
-  const base64Clean = base64.replace(/=/g, '');
-  
+  const base64Clean = base64.replace(/=/g, "");
+
   for (let i = 0; i < base64Clean.length; i += 4) {
-    const chunk = (charMap[base64Clean[i]] << 18) |
-                  (charMap[base64Clean[i + 1]] << 12) |
-                  ((charMap[base64Clean[i + 2]] || 0) << 6) |
-                  (charMap[base64Clean[i + 3]] || 0);
-    
+    const chunk =
+      (charMap[base64Clean[i]] << 18) |
+      (charMap[base64Clean[i + 1]] << 12) |
+      ((charMap[base64Clean[i + 2]] || 0) << 6) |
+      (charMap[base64Clean[i + 3]] || 0);
+
     bytes.push((chunk >> 16) & 0xff);
     if (base64Clean[i + 2] !== undefined) bytes.push((chunk >> 8) & 0xff);
     if (base64Clean[i + 3] !== undefined) bytes.push(chunk & 0xff);
@@ -84,7 +86,7 @@ const strToBytes = (str) => {
  * Manual implementation for environments without TextDecoder.
  */
 const bytesToStr = (bytes) => {
-  let str = '';
+  let str = "";
   for (let i = 0; i < bytes.length; i++) {
     str += String.fromCharCode(bytes[i]);
   }
@@ -112,23 +114,30 @@ export const generateSalt = () => generateRandomBytes(32);
 
 /**
  * Derive an AES-256 master key from a password using PBKDF2.
- * Iterations: 600,000 | Hash: SHA-256 | Key Length: 32 (256-bit)
+ * Iterations: 10,000 | Hash: SHA-256 | Key Length: 32 (256-bit)
+ *
+ * Note: 10K iterations optimizes for ultra-fast UX (~100-150ms)
+ * Use for development/testing. For production, increase to 100K+
  */
 export const deriveMasterKey = async (password, salt) => {
-  console.log('[cryptoEngine] Starting PBKDF2-SHA256 (10,000 iterations)...');
+  console.log("[cryptoEngine] Starting PBKDF2-SHA256 (10,000 iterations)...");
   const start = Date.now();
-  
+
   const passwordBytes = strToBytes(password);
   const saltBytes = salt instanceof Uint8Array ? salt : fromBase64(salt);
 
-  console.log('[cryptoEngine] Inputs prepared. Running heavy loop...');
-  // PBKDF2-SHA256 (Started at 10,000 for verification)
+  console.log("[cryptoEngine] Inputs prepared. Running key derivation...");
+  // PBKDF2-SHA256 with 10,000 iterations (ultra-fast on mobile)
   try {
-    const key = pbkdf2(sha256, passwordBytes, saltBytes, { c: 10000, dkLen: 32 });
-    console.log(`[cryptoEngine] PBKDF2 complete in ${Date.now() - start}ms`);
+    const key = pbkdf2(sha256, passwordBytes, saltBytes, {
+      c: 10000,
+      dkLen: 32,
+    });
+    const duration = Date.now() - start;
+    console.log(`[cryptoEngine] PBKDF2 complete in ${duration}ms`);
     return key;
   } catch (err) {
-    console.error('[cryptoEngine] PBKDF2 CRASHED:', err.message);
+    console.error("[cryptoEngine] PBKDF2 CRASHED:", err.message);
     throw err;
   }
 };
@@ -137,14 +146,15 @@ export const deriveMasterKey = async (password, salt) => {
 
 /**
  * Generate a cryptographically unique CID using CSPRNG.
- * Entropy: 36^6 ≈ 2.1 billion combinations.
+ * Format: 16 alphanumeric characters (A-Z, 0-9)
+ * Entropy: 36^16 ≈ 45 quadrillion combinations (extremely secure)
  */
 export const generateCID = () => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = generateRandomBytes(6);
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const bytes = generateRandomBytes(16); // 16 chars for high entropy
   return Array.from(bytes)
-    .map(b => chars[b % chars.length])
-    .join('');
+    .map((b) => chars[b % chars.length])
+    .join("");
 };
 
 // ── AES-256-GCM Encryption / Decryption ───────────────────────────
@@ -158,9 +168,9 @@ export const encryptAESGCM = async (key, plaintext) => {
   const iv = generateRandomBytes(12);
   const aes = gcm(key, iv);
   const plaintextBytes = strToBytes(plaintext);
-  
+
   const encrypted = aes.encrypt(plaintextBytes);
-  
+
   // Pack IV + Encrypted Data (Noble GCM combines ciphertext and tag)
   const combined = new Uint8Array(iv.length + encrypted.length);
   combined.set(iv, 0);
@@ -177,10 +187,10 @@ export const decryptAESGCM = async (key, encryptedBase64) => {
   const combined = fromBase64(encryptedBase64);
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
-  
+
   const aes = gcm(key, iv);
   const decrypted = aes.decrypt(encrypted);
-  
+
   return bytesToStr(decrypted);
 };
 
@@ -192,8 +202,8 @@ export const decryptAESGCM = async (key, encryptedBase64) => {
 export const computeSHA256 = async (data) => {
   const hashBytes = sha256(strToBytes(data));
   return Array.from(hashBytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 };
 
 // ── CID Bundle Helpers ─────────────────────────────────────────────
@@ -216,16 +226,20 @@ export const encryptCIDBundle = async (password, cid) => {
 /**
  * Verify flow: PBKDF2 → AES-Decrypt(CID) → SHA-Verify(CID)
  */
-export const decryptCIDBundle = async (password, encryptedCIDWithSalt, expectedHash) => {
-  const [saltB64, encryptedCID] = encryptedCIDWithSalt.split(':');
-  
+export const decryptCIDBundle = async (
+  password,
+  encryptedCIDWithSalt,
+  expectedHash,
+) => {
+  const [saltB64, encryptedCID] = encryptedCIDWithSalt.split(":");
+
   const salt = fromBase64(saltB64);
   const key = await deriveMasterKey(password, salt);
   const cid = await decryptAESGCM(key, encryptedCID);
 
   const computedHash = await computeSHA256(cid);
   if (computedHash !== expectedHash) {
-    throw new Error('CID integrity check failed');
+    throw new Error("CID integrity check failed");
   }
 
   return cid;
@@ -235,7 +249,7 @@ export const decryptCIDBundle = async (password, encryptedCIDWithSalt, expectedH
  * Restore key for session.
  */
 export const getKeyFromBundle = async (password, encryptedCIDWithSalt) => {
-  const [saltB64] = encryptedCIDWithSalt.split(':');
+  const [saltB64] = encryptedCIDWithSalt.split(":");
   return deriveMasterKey(password, fromBase64(saltB64));
 };
 
@@ -257,12 +271,15 @@ export const generateECDHKeyPair = async () => {
 /**
  * Derive Shared Secret via Diffie-Hellman.
  */
-export const deriveSharedSecret = async (myPrivateKeyB64, partnerPublicKeyB64) => {
+export const deriveSharedSecret = async (
+  myPrivateKeyB64,
+  partnerPublicKeyB64,
+) => {
   const myPriv = fromBase64(myPrivateKeyB64);
   const partPub = fromBase64(partnerPublicKeyB64);
-  
+
   const sharedPoint = p256.getSharedSecret(myPriv, partPub);
-  
+
   // Use first 32 bytes of shared secret for AES key
   const sharedKeyRaw = sha256(sharedPoint).slice(0, 32);
   return sharedKeyRaw;
@@ -272,6 +289,6 @@ export const deriveSharedSecret = async (myPrivateKeyB64, partnerPublicKeyB64) =
 
 export const generateRoomID = async (cidA, cidB, timestamp) => {
   const ts = timestamp || Date.now();
-  const sorted = [cidA, cidB].sort().join('');
+  const sorted = [cidA, cidB].sort().join("");
   return computeSHA256(`${sorted}${ts}`);
 };

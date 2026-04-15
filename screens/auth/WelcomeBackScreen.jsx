@@ -1,5 +1,5 @@
 // screens/auth/WelcomeBackScreen.jsx
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -13,8 +13,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-} from 'react-native';
-import { useCIDContext } from '../../context/CIDContext';
+} from "react-native";
+import { useCIDContext } from "../../context/CIDContext";
 
 /**
  * WelcomeBackScreen — CID Architecture Implementation
@@ -23,7 +23,7 @@ import { useCIDContext } from '../../context/CIDContext';
  *  1. User enters password
  *  2. verifyAndUnlock() is called:
  *     - Loads encrypted CID bundle from storage
- *     - Derives PBKDF2 key (600K iterations)
+ *     - Derives PBKDF2 key (10K iterations)
  *     - Decrypts CID with AES-256-GCM
  *     - Verifies SHA-256 integrity hash
  *  3. 'success'      → navigate to Chats
@@ -34,22 +34,43 @@ import { useCIDContext } from '../../context/CIDContext';
  */
 export default function WelcomeBackScreen({ navigation }) {
   const { verifyAndUnlock, failCount } = useCIDContext();
-  const [password,       setPassword]       = useState('');
-  const [showPassword,   setShowPassword]   = useState(false);
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
-  const [isLoading,      setIsLoading]      = useState(false);
-  const [shake]                             = useState(new Animated.Value(0));
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [shake] = useState(new Animated.Value(0));
 
   const remainingAttempts = Math.max(0, 3 - failCount);
 
   const triggerShake = () => {
     Vibration.vibrate(100);
     Animated.sequence([
-      Animated.timing(shake, { toValue: 10,  duration: 60, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: -10, duration: 60, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 6,   duration: 60, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: -6,  duration: 60, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 0,   duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, {
+        toValue: 10,
+        duration: 60,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shake, {
+        toValue: -10,
+        duration: 60,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shake, {
+        toValue: 6,
+        duration: 60,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shake, {
+        toValue: -6,
+        duration: 60,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shake, {
+        toValue: 0,
+        duration: 60,
+        useNativeDriver: true,
+      }),
     ]).start();
   };
 
@@ -57,32 +78,41 @@ export default function WelcomeBackScreen({ navigation }) {
     if (!password || isLoading) return;
 
     setIsLoading(true);
+    setErrorMessage(""); // Clear any previous error
+
     try {
-      // Real PBKDF2 decrypt + SHA-256 integrity check
+      console.log("[WelcomeBack] Attempting login...");
       const result = await verifyAndUnlock(password);
 
       switch (result) {
-        case 'success':
-          navigation.replace('Chats');
+        case "success":
+          console.log("[WelcomeBack] Login successful");
+          setPassword("");
+          navigation.replace("Chats");
           break;
 
-        case 'nuke':
-          // All data destroyed on 3rd wrong attempt
-          navigation.replace('AccessDenied');
+        case "nuke":
+          console.log("[WelcomeBack] 3 strikes - data nuked");
+          setPassword("");
+          // On nuke, go directly to CreatePasswordScreen to reset
+          navigation.replace("CreatePassword");
           break;
 
-        case 'wrong_password':
+        case "wrong_password":
         default:
+          console.log("[WelcomeBack] Wrong password attempt");
           triggerShake();
-          setPassword('');
-          // Navigate to WrongPassword screen for remaining-attempts UI
-          navigation.navigate('WrongPassword');
+          setErrorMessage(
+            `❌ Password incorrect · ${remainingAttempts - 1} attempts remaining`,
+          );
+          setPassword("");
           break;
       }
     } catch (error) {
-      console.error('[WelcomeBack] Login error:', error);
+      console.error("[WelcomeBack] Login error:", error);
       triggerShake();
-      setPassword('');
+      setErrorMessage("❌ Failed to verify password. Try again.");
+      setPassword("");
     } finally {
       setIsLoading(false);
     }
@@ -93,7 +123,7 @@ export default function WelcomeBackScreen({ navigation }) {
       <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <View style={styles.container}>
           {/* Logo */}
@@ -104,13 +134,16 @@ export default function WelcomeBackScreen({ navigation }) {
           </View>
 
           <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>Enter your master password to unlock</Text>
+          <Text style={styles.subtitle}>
+            Enter your master password to unlock
+          </Text>
 
           {/* Attempt warning banner */}
           {failCount > 0 && (
             <View style={styles.attemptBanner}>
               <Text style={styles.attemptText}>
-                ⚠️ {failCount} of 3 attempts used · {remainingAttempts} remaining
+                ⚠️ {failCount} of 3 attempts used · {remainingAttempts}{" "}
+                remaining
               </Text>
               {remainingAttempts === 1 && (
                 <Text style={styles.nukeWarning}>
@@ -120,9 +153,26 @@ export default function WelcomeBackScreen({ navigation }) {
             </View>
           )}
 
+          {/* Error Message - Inline */}
+          {errorMessage && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          )}
+
           {/* Password input */}
-          <Animated.View style={[styles.inputContainer, { transform: [{ translateX: shake }] }]}>
-            <View style={[styles.inputBox, passwordFocused && styles.inputBoxFocused]}>
+          <Animated.View
+            style={[
+              styles.inputContainer,
+              { transform: [{ translateX: shake }] },
+            ]}
+          >
+            <View
+              style={[
+                styles.inputBox,
+                passwordFocused && styles.inputBoxFocused,
+              ]}
+            >
               <Text style={styles.inputEmoji}>🗝️</Text>
               <TextInput
                 style={styles.hiddenInput}
@@ -142,14 +192,19 @@ export default function WelcomeBackScreen({ navigation }) {
                 onPress={() => setShowPassword(!showPassword)}
                 style={styles.eyeBtn}
               >
-                <Text style={styles.eyeEmoji}>{showPassword ? '🙈' : '👁️'}</Text>
+                <Text style={styles.eyeEmoji}>
+                  {showPassword ? "🙈" : "👁️"}
+                </Text>
               </TouchableOpacity>
             </View>
           </Animated.View>
 
           {/* Login button */}
           <TouchableOpacity
-            style={[styles.loginBtn, (!password || isLoading) && styles.loginBtnDisabled]}
+            style={[
+              styles.loginBtn,
+              (!password || isLoading) && styles.loginBtnDisabled,
+            ]}
             onPress={handleLogin}
             disabled={!password || isLoading}
             activeOpacity={0.8}
@@ -163,9 +218,7 @@ export default function WelcomeBackScreen({ navigation }) {
 
           {/* Loading hint */}
           {isLoading && (
-            <Text style={styles.loadingHint}>
-              Deriving key (PBKDF2 · 600K iterations)...
-            </Text>
+            <Text style={styles.loadingHint}>Verifying password...</Text>
           )}
 
           {/* Security note */}
@@ -181,11 +234,11 @@ export default function WelcomeBackScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFFFFF' },
+  safe: { flex: 1, backgroundColor: "#FFFFFF" },
   keyboardView: { flex: 1 },
   container: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
     paddingTop: 60,
     paddingHorizontal: 24,
     paddingBottom: 40,
@@ -194,115 +247,131 @@ const styles = StyleSheet.create({
   iconBox: {
     width: 80,
     height: 80,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: "#EFF6FF",
     borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   iconText: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#3B82F6',
-    textAlign: 'center',
+    fontWeight: "700",
+    color: "#3B82F6",
+    textAlign: "center",
   },
   title: {
     fontSize: 26,
-    fontWeight: '700',
-    color: '#0F172A',
+    fontWeight: "700",
+    color: "#0F172A",
     marginBottom: 6,
   },
   subtitle: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: "#94A3B8",
     marginBottom: 24,
-    textAlign: 'center',
+    textAlign: "center",
   },
   attemptBanner: {
-    backgroundColor: '#FEF2F2',
+    backgroundColor: "#FEF2F2",
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
     marginBottom: 16,
-    width: '100%',
+    width: "100%",
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: "#FECACA",
   },
   attemptText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#DC2626',
-    textAlign: 'center',
+    fontWeight: "600",
+    color: "#DC2626",
+    textAlign: "center",
   },
   nukeWarning: {
     fontSize: 12,
-    color: '#991B1B',
-    textAlign: 'center',
+    color: "#991B1B",
+    textAlign: "center",
     marginTop: 4,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   inputContainer: {
-    width: '100%',
+    width: "100%",
     marginBottom: 20,
   },
   inputBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: "#E2E8F0",
     paddingHorizontal: 16,
-    paddingVertical: Platform.OS === 'ios' ? 14 : 10,
+    paddingVertical: Platform.OS === "ios" ? 14 : 10,
     gap: 12,
   },
   inputBoxFocused: {
-    borderColor: '#3B82F6',
-    backgroundColor: '#EFF6FF',
+    borderColor: "#3B82F6",
+    backgroundColor: "#EFF6FF",
   },
   inputEmoji: { fontSize: 20 },
   hiddenInput: {
     flex: 1,
     fontSize: 16,
-    color: '#0F172A',
+    color: "#0F172A",
     letterSpacing: 1.5,
   },
   eyeBtn: { padding: 4 },
   eyeEmoji: { fontSize: 18 },
   loginBtn: {
-    width: '100%',
-    backgroundColor: '#3B82F6',
+    width: "100%",
+    backgroundColor: "#3B82F6",
     borderRadius: 14,
     paddingVertical: 16,
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: 12,
   },
   loginBtnDisabled: { opacity: 0.5 },
   loginText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   loadingHint: {
     fontSize: 12,
-    color: '#94A3B8',
-    textAlign: 'center',
+    color: "#94A3B8",
+    textAlign: "center",
     marginBottom: 12,
   },
   securityNote: {
-    marginTop: 'auto',
+    marginTop: "auto",
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: '#F0FDF4',
+    backgroundColor: "#F0FDF4",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#BBF7D0',
-    width: '100%',
+    borderColor: "#BBF7D0",
+    width: "100%",
   },
   securityNoteText: {
     fontSize: 12,
-    color: '#15803D',
-    textAlign: 'center',
-    fontWeight: '600',
+    color: "#15803D",
+    textAlign: "center",
+    fontWeight: "600",
     letterSpacing: 0.3,
+  },
+  errorBanner: {
+    backgroundColor: "#FEE2E2",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 16,
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  errorText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#DC2626",
+    textAlign: "center",
   },
 });

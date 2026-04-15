@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from "react";
 import {
   SafeAreaView,
   View,
@@ -6,22 +6,28 @@ import {
   ScrollView,
   Animated,
   StatusBar,
-} from 'react-native';
-import { COLORS } from '../../theme/colors';
-import { PrimaryButton, ContactCard, CheckItem } from '../../component/CIDFlowShared';
-import { CIDFlowStyles } from '../common/CIDFlowStyles';
-import { useCIDContext } from '../../context/CIDContext';
+} from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import { COLORS } from "../../theme/colors";
+import {
+  PrimaryButton,
+  ContactCard,
+  CheckItem,
+} from "../../component/CIDFlowShared";
+import { CIDFlowStyles } from "../common/CIDFlowStyles";
+import { useCIDContext } from "../../context/CIDContext";
 
 /**
  * Screen 49: Contact Added
  * Final success screen showing added contact
  * Displays confirmation checkmarks for security steps
+ * On complete, navigates to ChatMessageScreen with the new contact
  */
 const Screen49ContactAdded = ({ onNext }) => {
+  const navigation = useNavigation();
   const { currentContact, contacts } = useCIDContext();
   const scaleAnim = useRef(new Animated.Value(0)).current;
-  const listAnims = useRef([0, 1, 2].map(() => new Animated.Value(0)))
-    .current;
+  const listAnims = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     // Success circle scale animation
@@ -45,23 +51,34 @@ const Screen49ContactAdded = ({ onNext }) => {
 
   // Use current contact or mock data
   const contact = currentContact || {
-    cid: 'A7F3K9',
-    name: 'Ghost_Fox',
-    avatar: '🦊',
+    cid: "A7F3K9",
+    name: "Ghost_Fox",
+    avatar: "🦊",
     verified: true,
   };
 
   const checkItems = [
-    'CID verified - identity confirmed',
-    'E2EE keys exchanged',
-    'Ready to send encrypted messages',
+    "CID verified - identity confirmed",
+    "E2EE keys exchanged",
+    "Ready to send encrypted messages",
   ];
 
-  const handleComplete = () => {
-    // Navigate back to main app or chat
-    if (onNext) {
-      onNext();
-    }
+  const handleStartChatting = () => {
+    // Navigate to ChatMessageScreen with the new contact
+    console.log("[Screen49] Opening chat with contact:", contact);
+
+    // Navigate to the Chats screen first
+    navigation.navigate("Chats");
+
+    // Then navigate to the specific chat with the contact
+    setTimeout(() => {
+      navigation.navigate("ChatMessage", {
+        name: contact.name,
+        avatar: contact.avatar,
+        contactCID: contact.cid,
+        contactVerified: contact.verified,
+      });
+    }, 300);
   };
 
   return (
@@ -94,12 +111,9 @@ const Screen49ContactAdded = ({ onNext }) => {
           />
 
           {/* Checklist */}
-          <View style={{ width: '100%', marginTop: 20 }}>
+          <View style={{ width: "100%", marginTop: 20 }}>
             {checkItems.map((item, i) => (
-              <Animated.View
-                key={i}
-                style={[{ opacity: listAnims[i] }]}
-              >
+              <Animated.View key={i} style={[{ opacity: listAnims[i] }]}>
                 <CheckItem text={item} />
               </Animated.View>
             ))}
@@ -108,13 +122,16 @@ const Screen49ContactAdded = ({ onNext }) => {
           {/* Start Chatting Button */}
           <PrimaryButton
             label="💬 Start Chatting"
-            onPress={handleComplete}
-            style={{ marginTop: 32, width: '100%' }}
+            onPress={handleStartChatting}
+            style={{ marginTop: 32, width: "100%" }}
           />
 
           {/* Contact Count Info */}
-          <Text style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 16 }}>
-            You now have {contacts.length} secure contact{contacts.length !== 1 ? 's' : ''}
+          <Text
+            style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 16 }}
+          >
+            You now have {contacts.length} secure contact
+            {contacts.length !== 1 ? "s" : ""}
           </Text>
         </View>
       </ScrollView>

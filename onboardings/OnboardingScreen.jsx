@@ -1,5 +1,5 @@
 // onboardings/OnboardingScreen.jsx
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,52 +9,64 @@ import {
   Dimensions,
   TouchableOpacity,
   Platform,
-} from 'react-native';
-import { COLORS, SPACING, RADIUS } from './theme';
+} from "react-native";
+import { COLORS, SPACING, RADIUS } from "./theme";
 
-const { width, height } = Dimensions.get('window');
+const { width, height } = Dimensions.get("window");
 
 const SLIDES = [
   {
-    id: '1',
-    icon: '🔐',
-    iconBg: '#FEF3C7',
-    title: 'Zero-trust\nMessaging',
+    id: "1",
+    icon: "🔐",
+    iconBg: "#FEF3C7",
+    title: "Zero-trust\nMessaging",
     subtitle:
-      'Every message is encrypted before it leaves your device. Not even Locksy can read them.',
+      "Every message is encrypted before it leaves your device. Not even Locksy can read them.",
     features: [
-      { icon: '🔒', text: 'AES-256 encryption' },
-      { icon: '🌐', text: 'Peer-to-peer, no server storage' },
-      { icon: '👁️', text: 'Zero data retention' },
+      { icon: "🔒", text: "AES-256 encryption" },
+      { icon: "🌐", text: "Peer-to-peer, no server storage" },
+      { icon: "👁️", text: "Zero data retention" },
     ],
-    cta: 'Next →',
+    cta: "Next →",
   },
   {
-    id: '2',
-    icon: '🆔',
+    id: "2",
+    icon: "🆔",
     iconBg: COLORS.purpleLight,
     iconBgSolid: COLORS.purple,
-    title: 'Your CID is your\nidentity',
+    title: "Your CID is your\nidentity",
     subtitle: null,
-    cidExample: 'A 7 F 3 K 9',
+    cidExample: "A 7 F 3 K 9",
     features: [
-      { icon: '🙈', text: 'Never shown to others in groups' },
-      { icon: '📱', text: 'Share via QR code or manually' },
+      { icon: "🙈", text: "Never shown to others in groups" },
+      { icon: "📱", text: "Share via QR code or manually" },
     ],
-    cta: 'Next →',
+    cta: "Next →",
   },
   {
-    id: '3',
-    icon: '🛡️',
-    iconBg: '#DBEAFE',
-    title: 'You control\neverything',
+    id: "3",
+    icon: "🛡️",
+    iconBg: "#DBEAFE",
+    title: "You control\neverything",
     subtitle: null,
     features: [
-      { icon: '⏱️', title: 'Auto-delete timers', text: 'Messages vanish after reading' },
-      { icon: '🔒', title: 'Lock individual chats', text: 'Password required to open' },
-      { icon: '💣', title: 'Wipe on 3 wrong attempts', text: 'All data erased automatically' },
+      {
+        icon: "⏱️",
+        title: "Auto-delete timers",
+        text: "Messages vanish after reading",
+      },
+      {
+        icon: "🔒",
+        title: "Lock individual chats",
+        text: "Password required to open",
+      },
+      {
+        icon: "💣",
+        title: "Wipe on 3 wrong attempts",
+        text: "All data erased automatically",
+      },
     ],
-    cta: 'Get Started',
+    cta: "Get Started",
     isFinal: true,
   },
 ];
@@ -64,18 +76,27 @@ function Slide({ item, onNext, navigation }) {
     <View style={[styles.slide, { width }]}>
       {/* Icon */}
       <View style={styles.iconArea}>
-        {item.id === '1' && (
+        {item.id === "1" && (
           <View style={[styles.iconCircle, { backgroundColor: item.iconBg }]}>
             <Text style={styles.iconEmoji}>🔐</Text>
-            <Text style={[styles.iconEmoji, { position: 'absolute', bottom: -2, right: -2, fontSize: 32 }]}>🗝️</Text>
+            <Text
+              style={[
+                styles.iconEmoji,
+                { position: "absolute", bottom: -2, right: -2, fontSize: 32 },
+              ]}
+            >
+              🗝️
+            </Text>
           </View>
         )}
-        {item.id === '2' && (
-          <View style={[styles.iconSquare, { backgroundColor: item.iconBgSolid }]}>
+        {item.id === "2" && (
+          <View
+            style={[styles.iconSquare, { backgroundColor: item.iconBgSolid }]}
+          >
             <Text style={styles.idText}>ID</Text>
           </View>
         )}
-        {item.id === '3' && (
+        {item.id === "3" && (
           <View style={[styles.iconCircle, { backgroundColor: item.iconBg }]}>
             <Text style={{ fontSize: 70 }}>🛡️</Text>
           </View>
@@ -86,9 +107,7 @@ function Slide({ item, onNext, navigation }) {
       <Text style={styles.title}>{item.title}</Text>
 
       {/* Subtitle / special content */}
-      {item.subtitle && (
-        <Text style={styles.subtitle}>{item.subtitle}</Text>
-      )}
+      {item.subtitle && <Text style={styles.subtitle}>{item.subtitle}</Text>}
 
       {item.cidExample && (
         <View style={styles.cidCard}>
@@ -122,7 +141,7 @@ function Slide({ item, onNext, navigation }) {
         style={styles.ctaBtn}
         onPress={() => {
           if (item.isFinal) {
-            navigation.navigate('CID');
+            navigation.navigate("CIDGeneration");
           } else {
             onNext();
           }
@@ -133,7 +152,7 @@ function Slide({ item, onNext, navigation }) {
       </TouchableOpacity>
 
       {!item.isFinal && (
-        <TouchableOpacity onPress={() => navigation.navigate('CID')}>
+        <TouchableOpacity onPress={() => navigation.navigate("CIDGeneration")}>
           <Text style={styles.skipText}>Skip tutorial</Text>
         </TouchableOpacity>
       )}
@@ -176,7 +195,7 @@ export default function OnboardingScreen({ navigation }) {
         scrollEnabled={false}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-          { useNativeDriver: false }
+          { useNativeDriver: false },
         )}
         renderItem={({ item }) => (
           <Slide item={item} onNext={goNext} navigation={navigation} />
@@ -192,13 +211,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   dotsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
     gap: 8,
-    marginTop: Platform.OS === 'ios' ? 60 : 48,
+    marginTop: Platform.OS === "ios" ? 60 : 48,
     marginBottom: SPACING.sm,
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 52 : 40,
+    position: "absolute",
+    top: Platform.OS === "ios" ? 52 : 40,
     left: 0,
     right: 0,
     zIndex: 10,
@@ -215,24 +234,24 @@ const styles = StyleSheet.create({
   },
   slide: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
     paddingHorizontal: SPACING.xl,
-    paddingTop: Platform.OS === 'ios' ? 110 : 90,
+    paddingTop: Platform.OS === "ios" ? 110 : 90,
     paddingBottom: SPACING.xl,
   },
   iconArea: {
     marginBottom: SPACING.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   iconCircle: {
     width: 130,
     height: 130,
     borderRadius: 65,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    shadowColor: '#000',
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.08,
     shadowRadius: 16,
@@ -245,8 +264,8 @@ const styles = StyleSheet.create({
     width: 110,
     height: 110,
     borderRadius: RADIUS.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     shadowColor: COLORS.purple,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.3,
@@ -255,46 +274,46 @@ const styles = StyleSheet.create({
   },
   idText: {
     fontSize: 42,
-    fontWeight: '800',
+    fontWeight: "800",
     color: COLORS.white,
     letterSpacing: 2,
   },
   title: {
     fontSize: 28,
-    fontWeight: '800',
+    fontWeight: "800",
     color: COLORS.textPrimary,
-    textAlign: 'center',
+    textAlign: "center",
     lineHeight: 36,
     marginBottom: SPACING.md,
   },
   subtitle: {
     fontSize: 15,
     color: COLORS.textSecondary,
-    textAlign: 'center',
+    textAlign: "center",
     lineHeight: 22,
     marginBottom: SPACING.lg,
     paddingHorizontal: SPACING.sm,
   },
   cidCard: {
-    width: '100%',
+    width: "100%",
     backgroundColor: COLORS.primaryLight,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: COLORS.primaryGlow,
     padding: SPACING.lg,
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: SPACING.lg,
   },
   cidLabel: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: "700",
     color: COLORS.primary,
     letterSpacing: 2,
     marginBottom: SPACING.sm,
   },
   cidValue: {
     fontSize: 36,
-    fontWeight: '800',
+    fontWeight: "800",
     color: COLORS.primary,
     letterSpacing: 8,
     marginBottom: SPACING.sm,
@@ -304,13 +323,13 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
   },
   featuresContainer: {
-    width: '100%',
+    width: "100%",
     gap: SPACING.sm,
     marginBottom: SPACING.xl,
   },
   featureRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: COLORS.cardBg,
     borderRadius: RADIUS.md,
     padding: SPACING.md,
@@ -319,14 +338,14 @@ const styles = StyleSheet.create({
   featureIcon: {
     fontSize: 22,
     width: 32,
-    textAlign: 'center',
+    textAlign: "center",
   },
   featureTextWrap: {
     flex: 1,
   },
   featureTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
     color: COLORS.textPrimary,
     marginBottom: 2,
   },
@@ -336,15 +355,15 @@ const styles = StyleSheet.create({
   },
   featureTextSingle: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: "500",
     color: COLORS.textPrimary,
   },
   ctaBtn: {
-    width: '100%',
+    width: "100%",
     backgroundColor: COLORS.primary,
     borderRadius: RADIUS.full,
     paddingVertical: 18,
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: SPACING.md,
     shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 6 },
@@ -354,13 +373,13 @@ const styles = StyleSheet.create({
   },
   ctaText: {
     fontSize: 17,
-    fontWeight: '700',
+    fontWeight: "700",
     color: COLORS.white,
     letterSpacing: 0.3,
   },
   skipText: {
     fontSize: 14,
     color: COLORS.textMuted,
-    textDecorationLine: 'underline',
+    textDecorationLine: "underline",
   },
 });

@@ -1,4 +1,12 @@
-// onboardings/SetupMasterPassword.jsx
+/**
+ * CreatePasswordScreen.jsx — Password Creation/Reset
+ *
+ * Used in two scenarios:
+ * 1. User forgot password after getting into WrongPasswordScreen
+ * 2. User chooses to reset identity after nuking data
+ *
+ * Flow: User creates new password → Generates new CID → Encrypts and saves
+ */
 import React, { useState, useRef, useEffect } from "react";
 import {
   View,
@@ -13,8 +21,8 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import { useCIDContext } from "../context/CIDContext";
-import { COLORS, SPACING, RADIUS } from "./theme";
+import { useCIDContext } from "../../context/CIDContext";
+import { COLORS, SPACING, RADIUS } from "../../onboardings/theme";
 
 function getPasswordStrength(password) {
   if (!password) return { level: 0, label: "", color: COLORS.border };
@@ -53,8 +61,8 @@ function getPasswordStrength(password) {
   };
 }
 
-export default function SetupMasterPassword({ navigation }) {
-  const { initializeCID, userCID } = useCIDContext();
+export default function CreatePasswordScreen({ navigation }) {
+  const { initializeCID } = useCIDContext();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -84,7 +92,7 @@ export default function SetupMasterPassword({ navigation }) {
     }).start();
   }, [strength.level]);
 
-  const handleContinue = async () => {
+  const handleResetAndCreate = async () => {
     if (!password || !confirmPassword) {
       Alert.alert("Required", "Please fill in both password fields.");
       return;
@@ -99,47 +107,25 @@ export default function SetupMasterPassword({ navigation }) {
     }
 
     setIsLoading(true);
-
-    // Very brief delay for UX feedback
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     try {
-      console.log("[SetupMasterPassword] Starting secure identity setup...");
-      // Use pre-generated CID from context (set by CIDGenerationScreen)
-      // Password is NEVER stored — only used to derive AES-256 key via PBKDF2
-      await initializeCID(password, userCID); // userCID set by CIDGenerationScreen
+      console.log("[CreatePasswordScreen] Starting password reset...");
+      // Generate new CID and encrypt with new password
+      await initializeCID(password, null);
       console.log(
-        "[SetupMasterPassword] Identity setup complete, navigating...",
+        "[CreatePasswordScreen] Reset complete, navigating to setup.",
       );
-      // Navigate and show CID popup after setup
-      navigation.navigate("ShowCID");
+      navigation.navigate("SetupNickname");
     } catch (error) {
-      console.error("[SetupMasterPassword] initializeCID failed:", error);
+      console.error("[CreatePasswordScreen] Reset failed:", error);
       Alert.alert(
-        "Setup Error",
-        "Could not initialize secure identity. Please try again.",
+        "Reset Error",
+        "Could not reset your password. Please try again.",
       );
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const renderDots = (value, focused) => {
-    const count = Math.min(value.length, 8);
-    return (
-      <View style={styles.dotsContainer}>
-        {Array.from({ length: 8 }).map((_, i) => (
-          <View
-            key={i}
-            style={[
-              styles.inputDot,
-              i < count && styles.inputDotFilled,
-              focused && i === count - 1 && styles.inputDotActive,
-            ]}
-          />
-        ))}
-      </View>
-    );
   };
 
   return (
@@ -153,19 +139,25 @@ export default function SetupMasterPassword({ navigation }) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Step label */}
-          <Text style={styles.stepLabel}>STEP 1 OF 3 — SECURITY</Text>
+          {/* Header */}
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.backText}>← Back</Text>
+          </TouchableOpacity>
 
-          {/* Heading */}
-          <Text style={styles.title}>Create your{"\n"}master password</Text>
+          <Text style={styles.stepLabel}>SECURITY RESET</Text>
+          <Text style={styles.title}>Create a{"\n"}new password</Text>
           <Text style={styles.subtitle}>
-            Encrypts everything. Never stored.
+            This will generate a new identity{"\n"}and wipe your previous data.
           </Text>
 
           <View style={styles.divider} />
 
           {/* Password Field */}
-          <Text style={styles.fieldLabel}>Password</Text>
+          <Text style={styles.fieldLabel}>New Password</Text>
           <View
             style={[styles.inputBox, passwordFocused && styles.inputBoxFocused]}
           >
@@ -179,7 +171,7 @@ export default function SetupMasterPassword({ navigation }) {
               onBlur={() => setPasswordFocused(false)}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="Enter password"
+              placeholder="Enter new password"
               placeholderTextColor={COLORS.textMuted}
               maxLength={32}
             />
@@ -250,7 +242,6 @@ export default function SetupMasterPassword({ navigation }) {
                 />
               </View>
 
-              {/* Criteria */}
               <View style={styles.criteriaList}>
                 <CriteriaRow met={strength.hasLength} label="8+ characters" />
                 <CriteriaRow
@@ -266,7 +257,7 @@ export default function SetupMasterPassword({ navigation }) {
           )}
         </ScrollView>
 
-        {/* Continue Button */}
+        {/* Reset Button */}
         <View style={styles.bottomArea}>
           <TouchableOpacity
             style={[
@@ -274,7 +265,7 @@ export default function SetupMasterPassword({ navigation }) {
               (!password || !confirmPassword || isLoading) &&
                 styles.ctaBtnDisabled,
             ]}
-            onPress={handleContinue}
+            onPress={handleResetAndCreate}
             activeOpacity={0.85}
             disabled={isLoading}
           >
@@ -283,10 +274,10 @@ export default function SetupMasterPassword({ navigation }) {
                 style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
               >
                 <ActivityIndicator color={COLORS.white} size="small" />
-                <Text style={styles.ctaText}>Securing Identity...</Text>
+                <Text style={styles.ctaText}>Resetting...</Text>
               </View>
             ) : (
-              <Text style={styles.ctaText}>Continue</Text>
+              <Text style={styles.ctaText}>Reset Identity</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -315,8 +306,16 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: SPACING.xl,
-    paddingTop: Platform.OS === "ios" ? 70 : 55,
+    paddingTop: Platform.OS === "ios" ? 50 : 40,
     paddingBottom: 120,
+  },
+  backBtn: {
+    marginBottom: SPACING.lg,
+  },
+  backText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.primary,
   },
   stepLabel: {
     fontSize: 12,
@@ -336,6 +335,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
     marginBottom: SPACING.lg,
+    lineHeight: 20,
   },
   divider: {
     height: 1,
@@ -351,87 +351,67 @@ const styles = StyleSheet.create({
   inputBox: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.inputBg,
-    borderRadius: RADIUS.md,
-    borderWidth: 1.5,
-    borderColor: COLORS.inputBorder,
     paddingHorizontal: SPACING.md,
-    paddingVertical: Platform.OS === "ios" ? 14 : 10,
-    gap: SPACING.sm,
+    paddingVertical: SPACING.md,
+    backgroundColor: COLORS.surfaceLight,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: SPACING.sm,
   },
   inputBoxFocused: {
     borderColor: COLORS.primary,
-    backgroundColor: COLORS.primaryLight,
+    backgroundColor: "#F0F7FF",
   },
   inputBoxError: {
     borderColor: "#EF4444",
   },
   inputEmoji: {
-    fontSize: 20,
+    fontSize: 18,
+    marginRight: SPACING.md,
   },
   hiddenInput: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     color: COLORS.textPrimary,
-    letterSpacing: 2,
+    padding: 0,
   },
   eyeBtn: {
-    padding: 4,
+    padding: SPACING.sm,
   },
   eyeEmoji: {
     fontSize: 18,
   },
-  dotsContainer: {
-    flexDirection: "row",
-    gap: 6,
-    flex: 1,
-    alignItems: "center",
-  },
-  inputDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: COLORS.border,
-  },
-  inputDotFilled: {
-    backgroundColor: COLORS.primary,
-  },
-  inputDotActive: {
-    backgroundColor: COLORS.primary,
-    transform: [{ scale: 1.2 }],
-  },
   strengthSection: {
-    marginTop: SPACING.xl,
+    marginTop: SPACING.lg,
   },
   strengthHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
     marginBottom: SPACING.sm,
   },
   strengthLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
-    color: COLORS.textPrimary,
+    color: COLORS.textSecondary,
   },
   strengthValue: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
-    letterSpacing: 0.5,
   },
   strengthTrack: {
-    height: 6,
+    height: 4,
     backgroundColor: COLORS.border,
-    borderRadius: RADIUS.full,
-    overflow: "hidden",
+    borderRadius: 2,
     marginBottom: SPACING.md,
+    overflow: "hidden",
   },
   strengthBar: {
     height: "100%",
-    borderRadius: RADIUS.full,
+    borderRadius: 2,
   },
   criteriaList: {
-    gap: SPACING.xs,
+    gap: SPACING.sm,
   },
   criteriaRow: {
     flexDirection: "row",
@@ -439,51 +419,46 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
   },
   criteriaCheck: {
-    fontSize: 14,
-    color: COLORS.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.textSecondary,
     width: 16,
   },
   criteriaCheckMet: {
-    color: COLORS.success,
+    color: "#16A34A",
   },
   criteriaText: {
     fontSize: 13,
-    color: COLORS.textMuted,
+    color: COLORS.textSecondary,
   },
   criteriaTextMet: {
-    color: COLORS.success,
-    fontWeight: "600",
+    color: "#16A34A",
   },
   bottomArea: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: COLORS.white,
     paddingHorizontal: SPACING.xl,
-    paddingBottom: Platform.OS === "ios" ? 40 : SPACING.xl,
-    paddingTop: SPACING.md,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    paddingVertical: SPACING.lg,
+    paddingBottom: Platform.OS === "ios" ? SPACING.xl : SPACING.lg,
+    backgroundColor: COLORS.white,
   },
   ctaBtn: {
-    width: "100%",
     backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.full,
-    paddingVertical: 18,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: RADIUS.lg,
     alignItems: "center",
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    elevation: 8,
+    justifyContent: "center",
+    minHeight: 48,
   },
   ctaBtnDisabled: {
     opacity: 0.5,
   },
   ctaText: {
-    fontSize: 17,
-    fontWeight: "700",
     color: COLORS.white,
+    fontSize: 16,
+    fontWeight: "700",
   },
 });

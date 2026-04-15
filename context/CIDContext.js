@@ -10,9 +10,16 @@
  *  • SHA-256 integrity hash verifies correct decryption (losky_hash)
  *  • 3 wrong passwords → nukeAllData() — no recovery
  *  • masterKey held in useRef — never persisted, zeroed on lock
+ *  • Socket.io integrated for real-time contact management
  * ─────────────────────────────────────────────────────────────────
  */
-import React, { createContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, {
+  createContext,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import {
   encryptCIDBundle,
   decryptCIDBundle,
@@ -20,7 +27,7 @@ import {
   encryptAESGCM,
   decryptAESGCM,
   generateCID,
-} from '../utils/cryptoEngine';
+} from "../utils/cryptoEngine";
 import {
   saveCIDBundle,
   loadCIDBundle,
@@ -30,25 +37,31 @@ import {
   incrementFailCount,
   resetFailCount,
   nukeAllData,
-} from '../utils/secureStorage';
+} from "../utils/secureStorage";
+import socketService from "../utils/socketService";
 
 export const CIDContext = createContext();
 
 export const CIDProvider = ({ children }) => {
   // ── Identity State ───────────────────────────────────────────────
-  const [userCID,          setUserCIDState]      = useState(null);
-  const [userNickname,     setUserNicknameState] = useState('');
-  const [userAvatar,       setUserAvatarState]   = useState(null);
+  const [userCID, setUserCIDState] = useState(null);
+  const [userNickname, setUserNicknameState] = useState("");
+  const [userAvatar, setUserAvatarState] = useState(null);
 
   // ── Session State ────────────────────────────────────────────────
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [failCount,  setFailCount]  = useState(0);
+  const [failCount, setFailCount] = useState(0);
 
   // ── Contact / CID Flow State ─────────────────────────────────────
-  const [contacts,        setContacts]       = useState([]);
-  const [currentContact,  setCurrentContact] = useState(null);
-  const [scannedCID,      setScannedCID]     = useState(null);
-  const [enteredCID,      setEnteredCID]     = useState(['', '', '', '', '', '']);
+  const [contacts, setContacts] = useState([]);
+  const [currentContact, setCurrentContact] = useState(null);
+  const [scannedCID, setScannedCID] = useState(null);
+  const [enteredCID, setEnteredCID] = useState(["", "", "", "", "", ""]);
+
+  // ── Socket.io State ──────────────────────────────────────────────
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [socketError, setSocketError] = useState(null);
+  const socketInitializedRef = useRef(false);
 
   // ── Master Key (in-memory ONLY — NEVER persisted) ────────────────
   // Cleared when the app locks or the user logs out.
@@ -58,6 +71,76 @@ export const CIDProvider = ({ children }) => {
   useEffect(() => {
     getFailCount().then(setFailCount).catch(console.error);
   }, []);
+
+  // ── Socket.io Connection: Initialize when user is unlocked ───────
+  useEffect(() => {
+    if (!isUnlocked || !userCID || socketInitializedRef.current) {
+      return; // Not ready yet
+    }
+
+    const initializeSocket = async () => {
+      try {
+        const serverUrl = "http://192.168.1.1:5000"; // ⚠️  Update to your actual server URL
+        console.log("[CIDContext] Initializing Socket.io connection...");
+
+        await socketService.connect(serverUrl);
+
+        // Register user with Socket.io
+        await socketService.registerUser(userCID, userNickname, userAvatar);
+
+        setSocketConnected(true);
+        setSocketError(null);
+        socketInitializedRef.current = true;
+
+        console.log("[CIDContext] Socket.io initialized and user registered");
+
+        // Listen for incoming contact notifications
+        socketService.onContactAdded((data) => {
+          console.log("[CIDContext] New contact added notification:", data);
+          const newContact = {
+            cid: data.newContact.cid,
+            nickname: data.newContact.nickname,
+            avatar: data.newContact.avatar,
+            status: data.newContact.status,
+            verified: true,
+            addedAt: new Date().toISOString(),
+            roomId: data.roomId,
+          };
+          setContacts((prev) => [...prev, newContact]);
+        });
+
+        // Listen for user status changes
+        socketService.onUserStatusChanged((data) => {
+          console.log(
+            "[CIDContext] User status changed:",
+            data.cid,
+            data.status,
+          );
+          setContacts((prev) =>
+            prev.map((contact) =>
+              contact.cid === data.cid
+                ? { ...contact, status: data.status }
+                : contact,
+            ),
+          );
+        });
+      } catch (error) {
+        console.error("[CIDContext] Socket.io initialization failed:", error);
+        setSocketError(error.message || "Connection failed");
+      }
+    };
+
+    initializeSocket();
+
+    // Cleanup on unmount or when unlocked state changes
+    return () => {
+      if (socketInitializedRef.current && !isUnlocked) {
+        socketService.disconnect();
+        setSocketConnected(false);
+        socketInitializedRef.current = false;
+      }
+    };
+  }, [isUnlocked, userCID, userNickname, userAvatar]);
 
   // ────────────────────────────────────────────────────────────────
   // ONBOARDING: initializeCID
@@ -69,7 +152,7 @@ export const CIDProvider = ({ children }) => {
   /**
    * Full onboarding initialization:
    *   1. Generate CID via CSPRNG
-   *   2. Derive AES-256 key via PBKDF2 (600K iterations)
+   *   2. Derive AES-256 key via PBKDF2 (10K iterations)
    *   3. Encrypt CID with AES-256-GCM
    *   4. Compute SHA-256 integrity hash
    *   5. Encrypt nickname with same key
@@ -79,56 +162,59 @@ export const CIDProvider = ({ children }) => {
    * @param {string} [preGeneratedCID] — optional CID from Screen42 animation
    * @returns {string} the generated plaintext CID (held only in state)
    */
-  const initializeCID = useCallback(async (password, preGeneratedCID) => {
-    console.log('[CIDContext] initializeCID starting...');
-    // Use pre-generated CID from animation if provided, else generate fresh
-    const cid = preGeneratedCID || generateCID();
-    console.log('[CIDContext] Using CID:', cid);
+  const initializeCID = useCallback(
+    async (password, preGeneratedCID) => {
+      console.log("[CIDContext] initializeCID starting...");
+      // Use pre-generated CID from animation if provided, else generate fresh
+      const cid = preGeneratedCID || generateCID();
+      console.log("[CIDContext] Using CID:", cid);
 
-    try {
-      // Encrypt CID + compute hash (PBKDF2 key derivation happens inside)
-      console.log('[CIDContext] Attempting CID bundle encryption...');
-      const { encryptedCID, hash } = await encryptCIDBundle(password, cid);
-      console.log('[CIDContext] CID bundle encrypted successfully.');
+      try {
+        // Encrypt CID + compute hash (PBKDF2 key derivation happens inside)
+        console.log("[CIDContext] Attempting CID bundle encryption...");
+        const { encryptedCID, hash } = await encryptCIDBundle(password, cid);
+        console.log("[CIDContext] CID bundle encrypted successfully.");
 
-      // Re-derive key for nickname encryption and to cache in RAM
-      console.log('[CIDContext] Deriving session key...');
-      const key = await getKeyFromBundle(password, encryptedCID);
-      masterKeyRef.current = key;
-      console.log('[CIDContext] Session key derived and cached.');
+        // Re-derive key for nickname encryption and to cache in RAM
+        console.log("[CIDContext] Deriving session key...");
+        const key = await getKeyFromBundle(password, encryptedCID);
+        masterKeyRef.current = key;
+        console.log("[CIDContext] Session key derived and cached.");
 
-      // Encrypt nickname if already set
-      let encryptedNickname = '';
-      if (userNickname) {
-        console.log('[CIDContext] Encrypting current nickname...');
-        encryptedNickname = await encryptAESGCM(key, userNickname);
+        // Encrypt nickname if already set
+        let encryptedNickname = "";
+        if (userNickname) {
+          console.log("[CIDContext] Encrypting current nickname...");
+          encryptedNickname = await encryptAESGCM(key, userNickname);
+        }
+
+        // Persist encrypted bundle
+        console.log("[CIDContext] Saving bundle to SecureStore...");
+        await saveCIDBundle({
+          encryptedCID,
+          hash,
+          encryptedNickname,
+          timestamp: new Date().toISOString(),
+        });
+        console.log("[CIDContext] Bundle saved successfully.");
+
+        // Reset fail counter on fresh setup
+        await resetFailCount();
+
+        // Update in-memory state
+        setUserCIDState(cid);
+        setIsUnlocked(true);
+        setFailCount(0);
+
+        console.log("[CIDContext] initializeCID complete, returning to UI...");
+        return cid;
+      } catch (err) {
+        console.error("[CIDContext] initializeCID FATAL ERROR:", err);
+        throw err;
       }
-
-      // Persist encrypted bundle
-      console.log('[CIDContext] Saving bundle to SecureStore...');
-      await saveCIDBundle({
-        encryptedCID,
-        hash,
-        encryptedNickname,
-        timestamp: new Date().toISOString(),
-      });
-      console.log('[CIDContext] Bundle saved successfully.');
-
-      // Reset fail counter on fresh setup
-      await resetFailCount();
-
-      // Update in-memory state
-      setUserCIDState(cid);
-      setIsUnlocked(true);
-      setFailCount(0);
-
-      console.log('[CIDContext] initializeCID complete, returning to UI...');
-      return cid;
-    } catch (err) {
-      console.error('[CIDContext] initializeCID FATAL ERROR:', err);
-      throw err;
-    }
-  }, [userNickname]);
+    },
+    [userNickname],
+  );
 
   // ────────────────────────────────────────────────────────────────
   // LOGIN: verifyAndUnlock
@@ -150,13 +236,13 @@ export const CIDProvider = ({ children }) => {
   const verifyAndUnlock = useCallback(async (password) => {
     try {
       const bundle = await loadCIDBundle();
-      if (!bundle.encryptedCID) throw new Error('No CID bundle');
+      if (!bundle.encryptedCID) throw new Error("No CID bundle");
 
       // Throws if wrong password (AES-GCM auth tag) or tampered hash
       const cid = await decryptCIDBundle(
         password,
         bundle.encryptedCID,
-        bundle.hash
+        bundle.hash,
       );
 
       // Cache derived key in RAM for session use
@@ -179,11 +265,10 @@ export const CIDProvider = ({ children }) => {
       await resetFailCount();
       setFailCount(0);
 
-      return 'success';
-
+      return "success";
     } catch (error) {
       // Wrong password OR tampered data — both lead to fail count increment
-      console.warn('[CIDContext] verifyAndUnlock failed:', error.message);
+      console.warn("[CIDContext] verifyAndUnlock failed:", error.message);
 
       const newCount = await incrementFailCount();
       setFailCount(newCount);
@@ -193,14 +278,14 @@ export const CIDProvider = ({ children }) => {
         await nukeAllData();
         masterKeyRef.current = null;
         setUserCIDState(null);
-        setUserNicknameState('');
+        setUserNicknameState("");
         setUserAvatarState(null);
         setIsUnlocked(false);
         setFailCount(0);
-        return 'nuke';
+        return "nuke";
       }
 
-      return 'wrong_password';
+      return "wrong_password";
     }
   }, []);
 
@@ -214,13 +299,18 @@ export const CIDProvider = ({ children }) => {
   }, []);
 
   // ────────────────────────────────────────────────────────────────
-  // LOCK: clear session key from RAM
+  // LOCK: clear session key from RAM & disconnect Socket.io
   // ────────────────────────────────────────────────────────────────
   const lock = useCallback(() => {
     masterKeyRef.current = null;
     setUserCIDState(null);
-    setUserNicknameState('');
+    setUserNicknameState("");
     setIsUnlocked(false);
+
+    // Disconnect Socket.io
+    socketService.disconnect();
+    setSocketConnected(false);
+    socketInitializedRef.current = false;
   }, []);
 
   // ────────────────────────────────────────────────────────────────
@@ -238,7 +328,7 @@ export const CIDProvider = ({ children }) => {
         const encrypted = await encryptAESGCM(masterKeyRef.current, name);
         await saveEncryptedNickname(encrypted);
       } catch (e) {
-        console.error('[CIDContext] Failed to encrypt and save nickname:', e);
+        console.error("[CIDContext] Failed to encrypt and save nickname:", e);
       }
     }
   }, []);
@@ -251,15 +341,78 @@ export const CIDProvider = ({ children }) => {
   }, []);
 
   // ────────────────────────────────────────────────────────────────
-  // Contact Management
+  // Contact Management with Socket.io
   // ────────────────────────────────────────────────────────────────
   const addContact = useCallback((contact) => {
-    setContacts(prev => [...prev, contact]);
+    // Add contact to state
+    const newContact = {
+      ...contact,
+      id: contact.cid, // Use CID as unique identifier
+      addedAt: new Date().toISOString(),
+      verified: contact.verified || false,
+    };
+    setContacts((prev) => [...prev, newContact]);
+    console.log("[CIDContext] Contact added:", newContact);
+    return newContact;
+  }, []);
+
+  /**
+   * Search for contact by CID using Socket.io
+   * @param {string} otherCid - Other user's CID
+   * @returns {Promise<{roomId: string, otherUser: object}>}
+   */
+  const searchContactByCID = useCallback(
+    (otherCid) => {
+      if (!socketConnected) {
+        return Promise.reject(new Error("Socket not connected"));
+      }
+      return socketService.searchAndAddContact(otherCid);
+    },
+    [socketConnected],
+  );
+
+  /**
+   * Send message to contact via Socket.io
+   * @param {string} roomId - Chat room ID
+   * @param {string} message - Message text
+   */
+  const sendMessage = useCallback(
+    (roomId, message) => {
+      if (!socketConnected) {
+        console.error("[CIDContext] Socket not connected");
+        return;
+      }
+      socketService.sendMessage(roomId, message, userNickname);
+    },
+    [socketConnected, userNickname],
+  );
+
+  /**
+   * Get chat history for a room
+   * @param {string} roomId - Chat room ID
+   * @returns {Promise}
+   */
+  const getChatHistory = useCallback(
+    (roomId) => {
+      if (!socketConnected) {
+        return Promise.reject(new Error("Socket not connected"));
+      }
+      return socketService.getChatHistory(roomId);
+    },
+    [socketConnected],
+  );
+
+  /**
+   * Listen for incoming messages
+   * @param {Function} callback - Callback function
+   */
+  const onMessageReceived = useCallback((callback) => {
+    socketService.onMessageReceived(callback);
   }, []);
 
   const resetCIDFlow = useCallback(() => {
     setScannedCID(null);
-    setEnteredCID(['', '', '', '', '', '']);
+    setEnteredCID(["", "", "", "", "", ""]);
     setCurrentContact(null);
   }, []);
 
@@ -269,7 +422,7 @@ export const CIDProvider = ({ children }) => {
   const value = {
     // Identity
     userCID,
-    setUserCID,         // in-memory only during CID flow animation
+    setUserCID, // in-memory only during CID flow animation
     userNickname,
     updateNickname,
     userAvatar,
@@ -278,12 +431,12 @@ export const CIDProvider = ({ children }) => {
     // Session
     isUnlocked,
     failCount,
-    masterKeyRef,       // Ref — use sparingly; never expose raw key in UI
+    masterKeyRef, // Ref — use sparingly; never expose raw key in UI
 
     // Auth actions
-    initializeCID,      // onboarding: generate + encrypt + store
-    verifyAndUnlock,    // login: PBKDF2 decrypt + integrity check
-    lock,               // clear session key from RAM
+    initializeCID, // onboarding: generate + encrypt + store
+    verifyAndUnlock, // login: PBKDF2 decrypt + integrity check
+    lock, // clear session key from RAM & disconnect Socket.io
 
     // Contacts / CID Flow
     contacts,
@@ -295,6 +448,14 @@ export const CIDProvider = ({ children }) => {
     enteredCID,
     setEnteredCID,
     resetCIDFlow,
+
+    // Socket.io / Real-time Communication
+    socketConnected,
+    socketError,
+    searchContactByCID,
+    sendMessage,
+    getChatHistory,
+    onMessageReceived,
   };
 
   return <CIDContext.Provider value={value}>{children}</CIDContext.Provider>;
@@ -303,7 +464,7 @@ export const CIDProvider = ({ children }) => {
 export const useCIDContext = () => {
   const context = React.useContext(CIDContext);
   if (!context) {
-    throw new Error('useCIDContext must be used within CIDProvider');
+    throw new Error("useCIDContext must be used within CIDProvider");
   }
   return context;
 };
