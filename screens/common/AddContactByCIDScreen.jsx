@@ -26,6 +26,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from "../../theme";
 import { CIDContext } from "../../context/CIDContext";
 import socketService from "../../utils/socketService";
+import useSocketNavigation from "../../hooks/useSocketNavigation";
 
 const { height: screenHeight } = Dimensions.get("screen");
 
@@ -34,7 +35,10 @@ const { height: screenHeight } = Dimensions.get("screen");
  * User can view their CID and enter another user's CID to create a connection
  */
 export default function AddContactByCIDScreen({ navigation, route }) {
-  const { userCID, userNickname } = useContext(CIDContext);
+  // Auto-navigate when another user adds you as a contact
+  useSocketNavigation();
+  
+  const { userCID, userNickname, addContact } = useContext(CIDContext);
 
   // ─── Local State ────────────────────────────────────────────
   const [otherUserCid, setOtherUserCid] = useState("");
@@ -73,8 +77,8 @@ export default function AddContactByCIDScreen({ navigation, route }) {
 
   // ─── Validate CID format ──────────────────────────────────
   const isValidCID = (cid) => {
-    // CID should be alphanumeric, exactly 16 characters
-    return /^[A-Za-z0-9]{16}$/.test(cid.trim());
+    // CID should be alphanumeric, exactly 6 characters (A-Z, 0-9)
+    return /^[A-Z0-9]{6}$/.test(cid.trim().toUpperCase());
   };
 
   // ─── Search and add contact ────────────────────────────────
@@ -96,7 +100,7 @@ export default function AddContactByCIDScreen({ navigation, route }) {
 
     if (!isValidCID(otherUserCid)) {
       setError(
-        "⚠️  Invalid CID format. CID must be exactly 16 alphanumeric characters",
+        "⚠️  Invalid CID format. CID must be exactly 6 alphanumeric characters (A-Z, 0-9)",
       );
       return;
     }
@@ -120,6 +124,16 @@ export default function AddContactByCIDScreen({ navigation, route }) {
 
       console.log("[AddContact] Contact found:", result.otherUser);
 
+      // Add contact to state immediately for responsiveness
+      addContact({
+        cid: result.otherUser.cid,
+        nickname: result.otherUser.nickname,
+        avatar: result.otherUser.avatar,
+        status: result.otherUser.status || "offline",
+        verified: true,
+        roomId: result.roomId,
+      });
+
       // Success!
       setSuccessMessage(
         `✅ Contact "${result.otherUser.nickname}" has been added!`,
@@ -132,7 +146,7 @@ export default function AddContactByCIDScreen({ navigation, route }) {
           chatId: result.roomId,
           contactName: result.otherUser.nickname,
           contactCID: result.otherUser.cid,
-          contactAvatar: result.otherUser.avatar,
+          contactAvatar: result.otherUser.avatar || '👤',
         });
       }, 1500);
     } catch (err) {

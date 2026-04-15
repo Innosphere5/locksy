@@ -21,6 +21,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme/colors';
 import AttachMediaModal from '../modals/AttachMediaModal';
 import AutoCloseModal from '../modals/AutoCloseModal';
+import socketService from '../../utils/socketService';
+import { useCIDContext } from '../../context/CIDContext';
 
 // ============================================================================
 // RESPONSIVE UTILITY FUNCTIONS
@@ -632,14 +634,28 @@ export default function ChatMessageScreen({ navigation, route }) {
   // Get screen dimensions for responsive calculations
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const { userCID, userNickname, userAvatar } = useCIDContext();
   
-  // Header info
-  const contactName = route?.params?.name || 'Ghost_Fox';
+  // Get room info from route params (passed from AddContactByCIDScreen)
+  const roomId = route?.params?.chatId;
+  const contactName = route?.params?.contactName || 'Chat';
+  const contactCID = route?.params?.contactCID;
+  const contactAvatarParam = route?.params?.contactAvatar;
   const contactStatus = 'Online';
-  const avatar = '🦊';
+
+  // Avatar fallbacks - ensure these are always strings
+  const getAvatar = (avatar) => {
+    if (avatar && typeof avatar === 'string' && avatar.trim()) {
+      return avatar;
+    }
+    return '👤'; // Default fallback
+  };
+
+  const contactAvatar = getAvatar(contactAvatarParam);
+  const userAvatarSafe = getAvatar(userAvatar);
 
   // State management
-  const [messages, setMessages] = useState(SAMPLE_MESSAGES);
+  const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [selectedMsg, setSelectedMsg] = useState(null);
   const [showActionSheet, setShowActionSheet] = useState(false);
@@ -649,7 +665,154 @@ export default function ChatMessageScreen({ navigation, route }) {
   const [showAttachMediaModal, setShowAttachMediaModal] = useState(false);
   const [showAutoCloseModal, setShowAutoCloseModal] = useState(false);
   const [autocloseTimer, setAutoCloseTimer] = useState(null);
+  const [isSending, setIsSending] = useState(false);
   const flatListRef = useRef(null);
+  const messagesRef = useRef([]);
+  const messageListenerRef = useRef(null);
+
+  // Initialize socket listener for incoming messages
+  useEffect(() => {
+    if (!roomId) {
+      console.warn("[ChatMessage] No roomId available yet");
+      return;
+    }
+
+    console.log("[ChatMessage] Setting up message listener for room:", roomId);
+    console.log("[ChatMessage] Socket connected:", socketService.isConnected);
+    console.log("[ChatMessage] User CID:", userCID);
+
+    let isMounted = true;
+
+    const initializeRoom = async () => {
+      try {
+        // Wait for socket to be connected
+        console.log("[ChatMessage] Checking socket connection...");
+        if (!socketService.isConnected) {
+          console.log("[ChatMessage] Socket not connected, waiting...");
+          await socketService.waitForConnection(15000);
+          console.log("[ChatMessage] Socket is now ready");
+        } else {
+          console.log("[ChatMessage] Socket already connected");
+        }
+
+        // Join the room
+        if (!isMounted) return;
+        console.log("[ChatMessage] Attempting to join room...");
+        await socketService.joinRoom(roomId);
+        console.log("[ChatMessage] Successfully joined room");
+      } catch (error) {
+        console.error("[ChatMessage] Failed to initialize room:", error);
+        if (isMounted) {
+          alert("Failed to initialize chat: " + error.message);
+        }
+        return;
+      }
+
+      // Now register the message listener
+      if (!isMounted) return;
+      
+      // Listen for incoming messages
+      const handleMessageReceived = (message) => {
+        if (!isMounted) return;
+        
+        console.log("[ChatMessage] Socket event 'message:received' fired:", message);
+        console.log("[ChatMessage] Checking message roomId:", message.roomId, "vs current roomId:", roomId);
+        
+        if (message.roomId === roomId) {
+          console.log("[ChatMessage] Message is for this room, adding to UI...");
+          
+          const newMsg = {
+            id: message.id,
+            sender: userCID === message.senderCid ? 'sent' : 'received',
+            text: message.message,
+            time: new Date(message.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+            type: 'text',
+            reactions: [],
+            readStatus: userCID === message.senderCid ? 'delivered' : undefined,
+            isForwarded: false,
+            senderCid: message.senderCid,
+            senderNickname: message.senderNickname,
+            avatar: message.senderCid !== userCID ? contactAvatar : userAvatarSafe,
+          };
+          
+          console.log("[ChatMessage] Adding message to state:", newMsg);
+          setMessages(prev => {
+            console.log("[ChatMessage] Previous message count:", prev.length, "Adding one more...");
+            return [...prev, newMsg];
+          });
+          
+          // Scroll to bottom
+          setTimeout(() => {
+            if (isMounted) {
+              console.log("[ChatMessage] Scrolling to end");
+              flatListRef.current?.scrollToEnd({ animated: true });
+            }
+          }, 50);
+        } else {
+          console.log("[ChatMessage] Message is not for this room, ignoring");
+        }
+      };
+
+      // Store handler for cleanup
+      messageListenerRef.current = handleMessageReceived;
+
+      // Register the listener
+      console.log("[ChatMessage] Registering socket listener");
+      socketService.onMessageReceived(handleMessageReceived);
+
+      // Load chat history
+      loadChatHistory();
+    };
+
+    initializeRoom();
+
+    return () => {
+      isMounted = false;
+      console.log("[ChatMessage] Cleaning up message listener");
+      // Cleanup listener
+      if (messageListenerRef.current) {
+        socketService.socket?.off("message:received", messageListenerRef.current);
+        messageListenerRef.current = null;
+      }
+    };
+  }, [roomId, userCID, contactAvatar, userAvatarSafe]);
+
+  // Load chat history from server
+  const loadChatHistory = async () => {
+    if (!roomId) return;
+    
+    try {
+      console.log("[ChatMessage] Loading history for room:", roomId);
+      const history = await socketService.getChatHistory(roomId);
+      
+      if (history && history.messages) {
+        const formattedMessages = history.messages.map(msg => ({
+          id: msg.id,
+          sender: userCID === msg.senderCid ? 'sent' : 'received',
+          text: msg.message,
+          time: new Date(msg.timestamp).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          type: 'text',
+          reactions: [],
+          readStatus: msg.status,
+          isForwarded: false,
+          senderCid: msg.senderCid,
+          senderNickname: msg.senderNickname,
+          avatar: msg.senderCid !== userCID ? contactAvatar : userAvatarSafe,
+        }));
+        
+        setMessages(formattedMessages);
+        console.log("[ChatMessage] Loaded", formattedMessages.length, "messages");
+      }
+    } catch (error) {
+      console.error("[ChatMessage] Error loading history:", error);
+    }
+  };
 
   // Screen dimensions object for passing to child components
   const screenDimensions = { screenWidth, screenHeight };
@@ -759,27 +922,68 @@ export default function ChatMessageScreen({ navigation, route }) {
   };
 
   // Handle sending message
-  const handleSendMessage = () => {
-    if (inputText.trim()) {
+  const handleSendMessage = async () => {
+    if (!inputText.trim()) {
+      console.log("[ChatMessage] Ignoring empty message");
+      return;
+    }
+    
+    if (!roomId || !userCID) {
+      console.error("[ChatMessage] Cannot send - roomId:", roomId, "userCID:", userCID);
+      alert("Error: Chat not properly initialized");
+      return;
+    }
+
+    setIsSending(true);
+    const messageText = inputText.trim();
+    
+    try {
+      console.log("[ChatMessage] Sending message to room:", roomId);
+      console.log("[ChatMessage] Message text:", messageText);
+      console.log("[ChatMessage] Sender CID:", userCID);
+      console.log("[ChatMessage] Sender Nickname:", userNickname);
+      
+      // Send via socket.io
+      socketService.sendMessage(roomId, messageText, userNickname);
+      
+      // Add to local messages immediately for UX
       const newMsg = {
-        id: (messages.length + 1).toString(),
+        id: Date.now().toString(),
         sender: 'sent',
-        text: inputText.trim(),
+        text: messageText,
         time: new Date().toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
         }),
         type: 'text',
         reactions: [],
-        readStatus: 'sent',
+        readStatus: 'sending',
         isForwarded: false,
+        senderCid: userCID,
+        senderNickname: userNickname,
+        avatar: userAvatarSafe,
       };
-      setMessages([...messages, newMsg]);
+      
+      console.log("[ChatMessage] Adding message to local state:", newMsg);
+      setMessages(prev => {
+        console.log("[ChatMessage] Current messages before adding:", prev.length);
+        return [...prev, newMsg];
+      });
+      
       setInputText('');
-      // Scroll to end after a short delay
+      
+      // Scroll to end
       setTimeout(() => {
+        console.log("[ChatMessage] Scrolling to end after send");
         flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      }, 50);
+      
+      console.log("[ChatMessage] Message sent successfully");
+    } catch (error) {
+      console.error("[ChatMessage] Error sending message:", error);
+      alert("Failed to send message: " + error.message);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -831,7 +1035,7 @@ export default function ChatMessageScreen({ navigation, route }) {
     <KeyboardAvoidingView 
       style={styles.safe}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       <SafeAreaView style={styles.safe}>
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
@@ -892,7 +1096,7 @@ export default function ChatMessageScreen({ navigation, route }) {
                   }
                 ]}>
                   <Text style={{ fontSize: responsiveFontSize(20, screenWidth) }}>
-                    {avatar}
+                    {contactAvatar}
                   </Text>
                 </View>
                 <View style={[
@@ -1002,7 +1206,7 @@ export default function ChatMessageScreen({ navigation, route }) {
             styles.inputArea,
             { 
               paddingHorizontal: responsiveSize(12, screenWidth),
-              paddingBottom: Platform.OS === 'ios' ? insets.bottom + SPACING.md : SPACING.md,
+              paddingBottom: SPACING.md,
             }
           ]}>
             <TouchableOpacity

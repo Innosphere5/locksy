@@ -28,8 +28,9 @@ export default function ShowCIDScreen({ navigation }) {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  // Create animation for each character in the CID (generateCID returns 6 alphanumeric chars)
   const charAnims = useRef(
-    [0, 1, 2, 3, 4, 5].map(() => new Animated.Value(0)),
+    (userCID || "").split("").map(() => new Animated.Value(0)),
   ).current;
 
   useEffect(() => {

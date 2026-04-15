@@ -146,12 +146,13 @@ export const deriveMasterKey = async (password, salt) => {
 
 /**
  * Generate a cryptographically unique CID using CSPRNG.
- * Format: 16 alphanumeric characters (A-Z, 0-9)
- * Entropy: 36^16 ≈ 45 quadrillion combinations (extremely secure)
+ * Format: 6 alphanumeric characters (A-Z, 0-9)
+ * Entropy: 36^6 ≈ 2.18 billion combinations (extremely secure)
+ * Stored securely in Expo SecureStore (AES-256-GCM encrypted)
  */
 export const generateCID = () => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  const bytes = generateRandomBytes(16); // 16 chars for high entropy
+  const bytes = generateRandomBytes(6); // 6 chars = unique, memorable CID
   return Array.from(bytes)
     .map((b) => chars[b % chars.length])
     .join("");

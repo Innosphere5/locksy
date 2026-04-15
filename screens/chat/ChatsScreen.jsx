@@ -14,63 +14,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "../../theme";
 import { useCalls } from "../../context/CallsContext";
-
-const CHATS = [
-  {
-    id: "1",
-    name: "Ghost_Fox",
-    badge: "E2EE",
-    badgeColor: "#4B7BF5",
-    lastMessage: "Delivery confirmed",
-    time: "14:23",
-    unread: 3,
-    online: true,
-    avatar: "🦊",
-    avatarBg: "#EEF2FF",
-    locked: false,
-    expires: null,
-  },
-  {
-    id: "2",
-    name: "Shadow_Wolf",
-    badge: null,
-    lastMessage: "🔒 Expires in 3h",
-    time: "11:07",
-    unread: 0,
-    online: false,
-    avatar: "🐺",
-    avatarBg: "#EDE9FE",
-    locked: false,
-    expires: true,
-  },
-  {
-    id: "3",
-    name: "Locked Chat",
-    badge: null,
-    lastMessage: "Password required",
-    time: null,
-    unread: 0,
-    online: false,
-    avatar: null,
-    avatarBg: "#F3F4F6",
-    locked: true,
-    expires: null,
-  },
-  {
-    id: "4",
-    name: "OP-SECTOR-7",
-    badge: "GROUP",
-    badgeColor: "#64748B",
-    lastMessage: "🔒 Iron_Mask: stand by",
-    time: "08:12",
-    unread: 1,
-    online: false,
-    avatar: "👥",
-    avatarBg: "#DBEAFE",
-    locked: false,
-    expires: null,
-  },
-];
+import { CIDContext } from "../../context/CIDContext";
+import useSocketNavigation from "../../hooks/useSocketNavigation";
 
 function Avatar({ item }) {
   if (item.locked) {
@@ -188,24 +133,46 @@ function ChatRow({ item, onPress, navigation }) {
 }
 
 export default function ChatsScreen({ navigation }) {
+  // Auto-navigate when another user adds you as a contact
+  useSocketNavigation();
+  
+  // Get saved contacts from context
+  const { contacts } = React.useContext(CIDContext);
+  
   const [stealthMode, setStealthMode] = useState(true);
   const [search, setSearch] = useState("");
 
-  const filtered = CHATS.filter(
+  // Transform contacts into display format
+  const formattedChats = contacts.map((contact) => ({
+    id: contact.cid,
+    name: contact.nickname,
+    badge: "E2EE",
+    badgeColor: "#4B7BF5",
+    lastMessage: "Start chatting...",
+    time: null,
+    unread: 0,
+    online: contact.status === "online",
+    avatar: contact.avatar || "👤",
+    avatarBg: "#EEF2FF",
+    locked: false,
+    expires: null,
+    cid: contact.cid,
+    roomId: contact.roomId,
+  }));
+
+  const filtered = formattedChats.filter(
     (c) =>
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.lastMessage.toLowerCase().includes(search.toLowerCase()),
   );
 
   const handleChatPress = (item) => {
-    if (item.locked) {
-      navigation.navigate("UnlockChat", { chatName: item.name });
-    } else {
-      navigation.navigate("ChatMessage", {
-        name: item.name,
-        avatar: item.avatar,
-      });
-    }
+    navigation.navigate("ChatMessage", {
+      chatId: item.roomId,
+      contactName: item.name,
+      contactCID: item.cid,
+      contactAvatar: item.avatar || '👤',
+    });
   };
 
   return (
@@ -291,10 +258,10 @@ export default function ChatsScreen({ navigation }) {
         <TouchableOpacity style={styles.navItem}>
           <View style={styles.navIconWrap}>
             <Text style={styles.navEmoji}>💬</Text>
-            {CHATS.reduce((acc, c) => acc + c.unread, 0) > 0 && (
+            {formattedChats.reduce((acc, c) => acc + c.unread, 0) > 0 && (
               <View style={styles.navBadge}>
                 <Text style={styles.navBadgeText}>
-                  {CHATS.reduce((acc, c) => acc + c.unread, 0)}
+                  {formattedChats.reduce((acc, c) => acc + c.unread, 0)}
                 </Text>
               </View>
             )}

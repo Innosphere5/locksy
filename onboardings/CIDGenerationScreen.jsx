@@ -2,10 +2,11 @@
  * CIDGenerationScreen.jsx - Generate & Display User's Unique CID
  *
  * This screen:
- * 1. Generates a cryptographically unique CID (6 alphanumeric chars)
+ * 1. Generates a cryptographically unique CID (6 alphanumeric chars: A-Z, 0-9)
  * 2. Displays it with animation
  * 3. Saves it to CIDContext (RAM)
  * 4. Allows user to continue to password setup
+ * 5. CID is encrypted and stored securely in Expo SecureStore
  */
 import React, { useRef, useEffect, useState } from "react";
 import {
@@ -29,9 +30,8 @@ export default function CIDGenerationScreen({ navigation }) {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
-  const charAnims = useRef(
-    [0, 1, 2, 3, 4, 5].map(() => new Animated.Value(0)),
-  ).current;
+  // Create animation for each character in the CID (generateCID returns 6 alphanumeric chars)
+  const charAnimsRef = useRef([]);
   const successAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -42,6 +42,9 @@ export default function CIDGenerationScreen({ navigation }) {
 
     setGeneratedCID(cid);
     setUserCID(cid); // Save to context
+
+    // Initialize animation array dynamically based on CID length
+    charAnimsRef.current = cid.split("").map(() => new Animated.Value(0));
 
     // Fade in and slide up
     Animated.parallel([
@@ -59,7 +62,7 @@ export default function CIDGenerationScreen({ navigation }) {
       // Animate each character
       Animated.stagger(
         80,
-        charAnims.map((anim) =>
+        charAnimsRef.current.map((anim) =>
           Animated.spring(anim, {
             toValue: 1,
             friction: 5,
@@ -117,10 +120,10 @@ export default function CIDGenerationScreen({ navigation }) {
                 style={[
                   styles.cidCharBox,
                   {
-                    opacity: charAnims[i],
+                    opacity: charAnimsRef.current[i] || new Animated.Value(0),
                     transform: [
                       {
-                        scale: charAnims[i].interpolate({
+                        scale: (charAnimsRef.current[i] || new Animated.Value(0)).interpolate({
                           inputRange: [0, 1],
                           outputRange: [0.3, 1],
                         }),

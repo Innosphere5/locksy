@@ -18,7 +18,6 @@ const { height } = Dimensions.get('window');
 export default function IncomingCallScreen({ navigation, route }) {
   const { acceptCall, declineCall } = useCalls();
   const { caller } = route?.params || {};
-  const [ringAnimation] = useState(new Animated.Value(0));
   const [pulseAnimation] = useState(new Animated.Value(0));
 
   // Default caller if not provided

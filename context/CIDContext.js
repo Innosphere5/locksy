@@ -37,8 +37,12 @@ import {
   incrementFailCount,
   resetFailCount,
   nukeAllData,
+  loadContacts,
+  saveContacts,
+  addContact,
 } from "../utils/secureStorage";
 import socketService from "../utils/socketService";
+import AppConfig from "../config/appConfig";
 
 export const CIDContext = createContext();
 
@@ -72,6 +76,23 @@ export const CIDProvider = ({ children }) => {
     getFailCount().then(setFailCount).catch(console.error);
   }, []);
 
+  // ── Load saved contacts from storage ──────────────────────────────
+  useEffect(() => {
+    if (!isUnlocked) return;
+
+    const loadSavedContacts = async () => {
+      try {
+        const savedContacts = await loadContacts();
+        console.log('[CIDContext] Loaded contacts from storage:', savedContacts.length);
+        setContacts(savedContacts);
+      } catch (error) {
+        console.error('[CIDContext] Error loading contacts:', error);
+      }
+    };
+
+    loadSavedContacts();
+  }, [isUnlocked]);
+
   // ── Socket.io Connection: Initialize when user is unlocked ───────
   useEffect(() => {
     if (!isUnlocked || !userCID || socketInitializedRef.current) {
@@ -80,8 +101,9 @@ export const CIDProvider = ({ children }) => {
 
     const initializeSocket = async () => {
       try {
-        const serverUrl = "http://192.168.1.1:5000"; // ⚠️  Update to your actual server URL
+        const serverUrl = AppConfig.SERVER.URL;
         console.log("[CIDContext] Initializing Socket.io connection...");
+        console.log(`[CIDContext] Server URL: ${serverUrl}`);
 
         await socketService.connect(serverUrl);
 
@@ -107,6 +129,10 @@ export const CIDProvider = ({ children }) => {
             roomId: data.roomId,
           };
           setContacts((prev) => [...prev, newContact]);
+          // Persist the new contact
+          addContact(newContact).catch(err => 
+            console.error('[CIDContext] Failed to persist contact:', err)
+          );
         });
 
         // Listen for user status changes
@@ -141,6 +167,15 @@ export const CIDProvider = ({ children }) => {
       }
     };
   }, [isUnlocked, userCID, userNickname, userAvatar]);
+
+  // ── Persist contacts to storage when they change ────────────────
+  useEffect(() => {
+    if (contacts.length > 0) {
+      saveContacts(contacts).catch(err =>
+        console.error('[CIDContext] Failed to save contacts:', err)
+      );
+    }
+  }, [contacts]);
 
   // ────────────────────────────────────────────────────────────────
   // ONBOARDING: initializeCID

@@ -3,10 +3,12 @@
  * ─────────────────────────────────────────────────────────────────
  * Socket.io Client Service for real-time communication
  * Handles connection, user registration, contact search, messaging
+ * Uses AppConfig for server URL configuration
  * ─────────────────────────────────────────────────────────────────
  */
 
 import { io } from "socket.io-client";
+import AppConfig from "../config/appConfig";
 
 class SocketService {
   constructor() {
@@ -20,7 +22,8 @@ class SocketService {
 
   /**
    * Initialize Socket.io connection
-   * @param {string} serverUrl - Server URL (e.g., "http://192.168.1.1:5000")
+   * @param {string} serverUrl - Server URL from AppConfig (e.g., "http://192.168.31.1:5000")
+   * Configure in: locksy/config/appConfig.js
    * @returns {Promise<void>}
    */
   connect(serverUrl) {
@@ -185,17 +188,20 @@ class SocketService {
    */
   sendMessage(roomId, message, senderNickname) {
     if (!this.socket) {
-      console.error("[SocketService] Socket not connected");
+      console.error("[SocketService] Socket not connected - cannot send message");
       return;
     }
 
     if (!this.userCid) {
-      console.error("[SocketService] User not registered");
+      console.error("[SocketService] User not registered - cannot send message");
       return;
     }
 
     console.log(
-      `[SocketService] Sending message to ${roomId}: "${message.substring(0, 50)}..."`,
+      `[SocketService] Emitting message:send to server - roomId: ${roomId}, from: ${this.userCid}`,
+    );
+    console.log(
+      `[SocketService] Message content: "${message.substring(0, 80)}..."`,
     );
 
     this.socket.emit("message:send", {
@@ -204,6 +210,8 @@ class SocketService {
       senderCid: this.userCid,
       senderNickname,
     });
+    
+    console.log("[SocketService] message:send emitted successfully");
   }
 
   /**
@@ -211,16 +219,94 @@ class SocketService {
    * @param {Function} callback - Function to call when message received
    */
   onMessageReceived(callback) {
-    if (!this.socket) return;
-    this.socket.on("message:received", callback);
+    if (!this.socket) {
+      console.error("[SocketService] Cannot register message listener - socket not connected");
+      return;
+    }
+    console.log("[SocketService] Registering listener for message:received event");
+    this.socket.on("message:received", (message) => {
+      console.log("[SocketService] Socket.io event 'message:received' triggered with:", message);
+      callback(message);
+    });
     this._addListener("message:received", callback);
   }
 
   /**
-   * Get chat history for a room
-   * @param {string} roomId - Chat room ID
-   * @returns {Promise<{roomId: string, messages: Array}>}
+   * Wait for socket to be connected
+   * @returns {Promise<void>}
    */
+  waitForConnection(timeoutMs = 10000) {
+    return new Promise((resolve, reject) => {
+      if (this.isConnected) {
+        console.log("[SocketService] Socket already connected");
+        resolve();
+        return;
+      }
+
+      console.log("[SocketService] Waiting for socket connection...");
+      
+      const startTime = Date.now();
+      const checkInterval = setInterval(() => {
+        if (this.isConnected) {
+          clearInterval(checkInterval);
+          console.log("[SocketService] Socket is now connected");
+          resolve();
+        } else if (Date.now() - startTime > timeoutMs) {
+          clearInterval(checkInterval);
+          reject(new Error("Socket connection timeout"));
+        }
+      }, 100);
+    });
+  }
+
+  /**
+   * Join a chat room (ensures socket is part of the room)
+   * @param {string} roomId - Chat room ID
+   * @returns {Promise<void>}
+   */
+  joinRoom(roomId) {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) {
+        reject(new Error("Socket not created"));
+        return;
+      }
+
+      if (!this.isConnected) {
+        reject(new Error("Socket not connected"));
+        return;
+      }
+
+      console.log(`[SocketService] Joining room: ${roomId}`);
+      this.socket.emit("room:join", { roomId });
+
+      const handleJoined = (data) => {
+        console.log("[SocketService] Room join successful:", data);
+        this.socket.off("room:joined", handleJoined);
+        this.socket.off("room:error", handleError);
+        clearTimeout(timeoutHandle);
+        resolve(data);
+      };
+
+      const handleError = (error) => {
+        console.error("[SocketService] Room join failed:", error);
+        this.socket.off("room:joined", handleJoined);
+        this.socket.off("room:error", handleError);
+        clearTimeout(timeoutHandle);
+        reject(new Error(error.message || "Failed to join room"));
+      };
+
+      this.socket.on("room:joined", handleJoined);
+      this.socket.on("room:error", handleError);
+
+      // Timeout after 10seconds
+      const timeoutHandle = setTimeout(() => {
+        this.socket.off("room:joined", handleJoined);
+        this.socket.off("room:error", handleError);
+        console.error("[SocketService] Room join timeout after 10s");
+        reject(new Error("Room join timeout"));
+      }, 10000);
+    });
+  }
   getChatHistory(roomId) {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
