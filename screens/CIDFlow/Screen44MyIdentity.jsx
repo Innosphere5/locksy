@@ -25,10 +25,8 @@ import { useCIDContext } from "../../context/CIDContext";
  * Features: Animated character reveal, staggered action rows
  */
 const Screen44MyIdentity = ({ onNext, onBack }) => {
-  const { userCID, setUserCID } = useCIDContext();
+  const { userCID, setUserCID, userNickname, userAvatar } = useCIDContext();
   const navigation = useNavigation();
-  const userName = "Phantom_X";
-  const userAvatar = "👤";
 
   // Animation refs
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -139,7 +137,7 @@ const Screen44MyIdentity = ({ onNext, onBack }) => {
           </View>
 
           {/* Username */}
-          <Text style={CIDFlowStyles.profileName}>{userName}</Text>
+          <Text style={CIDFlowStyles.profileName}>{userNickname || 'Anonymous'}</Text>
 
           {/* CID with Character Animations */}
           <View style={styles.cidDisplayContainer}>

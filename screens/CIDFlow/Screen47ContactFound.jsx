@@ -6,11 +6,13 @@ import {
   Animated,
   StatusBar,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { COLORS } from '../../theme/colors';
 import { PrimaryButton, ContactCard } from '../../component/CIDFlowShared';
 import { CIDFlowStyles } from '../common/CIDFlowStyles';
 import { useCIDContext } from '../../context/CIDContext';
+import socketService from '../../utils/socketService';
 
 const { height: SCREEN_H } = Dimensions.get('window');
 
@@ -39,20 +41,29 @@ const Screen47ContactFound = ({ onNext, onBack }) => {
     ]).start();
   }, []);
 
-  const handleAddContact = () => {
-    if (currentContact) {
-      addContact(currentContact);
-      onNext();
+  const handleAddContact = async () => {
+    if (contact && contact.cid) {
+      try {
+        console.log(`[Screen47] Direct adding contact from QR: ${contact.cid}`);
+        socketService.addContactDirect(contact.cid);
+        
+        onNext(); // Go to Screen 49 (Request Sent)
+      } catch (err) {
+        console.error('[Screen47] Failed to add contact:', err.message);
+        Alert.alert('Add Failed', 'Could not add connection. Please try again.');
+      }
     }
   };
 
   // Mock contact data if not provided
   const contact = currentContact || {
     cid: 'A7F3K9',
-    name: 'Ghost_Fox',
+    nickname: 'Ghost_Fox',
     avatar: '🦊',
     verified: true,
   };
+
+  const displayName = contact.nickname || contact.name || 'Unknown';
 
   return (
     <SafeAreaView style={CIDFlowStyles.safeAreaDark}>
@@ -112,7 +123,7 @@ const Screen47ContactFound = ({ onNext, onBack }) => {
 
         {/* Contact Card */}
         <ContactCard
-          name={contact.name}
+          name={displayName}
           cid={contact.cid}
           avatar={contact.avatar}
           verified={contact.verified}
@@ -128,7 +139,7 @@ const Screen47ContactFound = ({ onNext, onBack }) => {
 
         {/* Add Button */}
         <PrimaryButton
-          label={`Add ${contact.name}`}
+          label={`Add ${displayName}`}
           onPress={handleAddContact}
           style={{ marginTop: 20 }}
         />

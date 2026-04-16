@@ -15,13 +15,15 @@ import { NavBar, PrimaryButton } from '../../component/CIDFlowShared';
 import { CIDFlowStyles } from '../common/CIDFlowStyles';
 import { useCIDContext } from '../../context/CIDContext';
 
+import socketService from '../../utils/socketService';
+
 /**
  * Screen 48: Add By CID Manually
  * Allows user to enter 6-character CID
  * Validates and searches for contact
  */
 const Screen48AddByCID = ({ onNext, onBack }) => {
-  const { setCurrentContact, addContact } = useCIDContext();
+  const { setCurrentContact, userCID } = useCIDContext();
   const [cid, setCid] = useState(['', '', '', '', '', '']);
   const [activeTab, setActiveTab] = useState('enter');
   const [isValidating, setIsValidating] = useState(false);
@@ -64,7 +66,7 @@ const Screen48AddByCID = ({ onNext, onBack }) => {
     }
   }, []);
 
-  const handleFindContact = useCallback(() => {
+  const handleFindContact = async () => {
     const enteredCID = cid.join('');
     
     if (enteredCID.length !== 6) {
@@ -72,29 +74,29 @@ const Screen48AddByCID = ({ onNext, onBack }) => {
       return;
     }
 
-    if (!/^[A-Z0-9]{6}$/.test(enteredCID)) {
-      Alert.alert('Invalid Format', 'CID must contain only letters and numbers');
+    if (enteredCID === userCID) {
+      Alert.alert('Invalid', 'You cannot add yourself.');
       return;
     }
 
     setIsValidating(true);
-
-    // Simulate contact lookup with API delay
-    setTimeout(() => {
+    try {
+      console.log(`[Screen48] Searching for CID: ${enteredCID}`);
+      const { otherUser } = await socketService.searchContact(enteredCID);
+      
+      if (otherUser) {
+        setCurrentContact(otherUser);
+        onNext();
+      } else {
+        Alert.alert('Not Found', 'User not found. Please check the CID.');
+      }
+    } catch (err) {
+      console.error('[Screen48] Search failed:', err.message);
+      Alert.alert('Error', err.message || 'Failed to search for contact.');
+    } finally {
       setIsValidating(false);
-
-      // Mock contact data
-      const mockContact = {
-        cid: enteredCID,
-        name: `User_${enteredCID}`,
-        avatar: '👤',
-        verified: false,
-      };
-
-      setCurrentContact(mockContact);
-      onNext();
-    }, 1500);
-  }, [cid, onNext, setCurrentContact]);
+    }
+  };
 
   return (
     <SafeAreaView style={CIDFlowStyles.safeAreaWhite}>

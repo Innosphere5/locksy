@@ -67,18 +67,10 @@ const Screen49ContactAdded = ({ onNext }) => {
     // Navigate to ChatMessageScreen with the new contact
     console.log("[Screen49] Opening chat with contact:", contact);
 
-    // Navigate to the Chats screen first
+    // For immediate QR scans, rely on the global useSocketNavigation hook 
+    // to pick up the correct roomId from the server and auto-route. 
+    // Just drop them at the active Chats tab as a reliable fallback.
     navigation.navigate("Chats");
-
-    // Then navigate to the specific chat with the contact
-    setTimeout(() => {
-      navigation.navigate("ChatMessage", {
-        name: contact.name,
-        avatar: contact.avatar,
-        contactCID: contact.cid,
-        contactVerified: contact.verified,
-      });
-    }, 300);
   };
 
   return (

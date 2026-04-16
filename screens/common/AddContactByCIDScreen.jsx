@@ -6,7 +6,7 @@
  * ─────────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useEffect, useContext } from "react";
+import React, { useState, useEffect, useContext, useRef } from "react";
 import {
   View,
   Text,
@@ -21,8 +21,12 @@ import {
   Keyboard,
   Dimensions,
   Platform,
+  Share,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import QRCode from "react-native-qrcode-svg";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from "../../theme";
 import { CIDContext } from "../../context/CIDContext";
 import socketService from "../../utils/socketService";
@@ -48,6 +52,47 @@ export default function AddContactByCIDScreen({ navigation, route }) {
   const [successMessage, setSuccessMessage] = useState("");
   const [foundUser, setFoundUser] = useState(null); // { cid, nickname, avatar, status }
   const [showMyQR, setShowMyQR] = useState(false);
+  
+  const qrRef = useRef();
+
+  // ─── Share QR Image ────────────────────────────────────────
+  const handleShareQR = () => {
+    if (!qrRef.current || !userCID) {
+      Alert.alert('Not Ready', 'QR Code is still rendering.');
+      return;
+    }
+
+    qrRef.current.toDataURL(async (dataURL) => {
+      try {
+        // Enforce pure base64 formatting
+        const base64Data = dataURL.replace(/^data:image\/png;base64,/, "");
+        
+        const fileName = `Locksy_QR_${userCID}.png`;
+        const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+          encoding: 'base64',
+        });
+
+        const isAvailable = await Sharing.isAvailableAsync();
+        
+        if (isAvailable) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'image/png',
+            dialogTitle: `Share Locksy QR Code`,
+            UTI: 'public.png',
+          });
+        } else {
+          await Share.share({
+            message: `Scan my QR code or add my CID: ${userCID} on Locksy to connect!`,
+          });
+        }
+      } catch (error) {
+        console.error('[QRCode] Share error:', error);
+        Alert.alert('Share Failed', `Unable to share QR. Error: ${error.message}`);
+      }
+    });
+  };
 
   // ─── Format CID with visual separators ────────────────────
   const formatCID = (cid) => {
@@ -190,14 +235,24 @@ export default function AddContactByCIDScreen({ navigation, route }) {
 
       {showMyQR && (
         <View style={styles.qrContainer}>
-          <View style={styles.qrPlaceholder}>
-            <MaterialCommunityIcons
-              name="qrcode"
-              size={100}
-              color={COLORS.primary}
+          <View style={[styles.qrInner, { padding: 15, backgroundColor: COLORS.white, borderRadius: RADIUS.md }]}>
+            <QRCode
+              value={userCID || 'ERROR'}
+              size={150}
+              color={COLORS.text}
+              backgroundColor={COLORS.white}
+              quietZone={10}
+              getRef={(ref) => (qrRef.current = ref)}
             />
-            <Text style={styles.qrText}>Scan to add me</Text>
           </View>
+          <TouchableOpacity 
+             style={styles.shareQRButton}
+             onPress={handleShareQR}
+             activeOpacity={0.8}
+          >
+             <MaterialCommunityIcons name="share-variant" size={20} color={COLORS.primary} />
+             <Text style={styles.shareQRText}>Share QR Code</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -253,6 +308,30 @@ export default function AddContactByCIDScreen({ navigation, route }) {
         <Text style={styles.charCounter}>
           {otherUserCid.length}/20 characters
         </Text>
+      </View>
+
+      {/* QR Scanning Shortcuts */}
+      <View style={styles.qrShortcutContainer}>
+        <Text style={styles.qrShortcutTitle}>Or use QR Code:</Text>
+        <View style={styles.qrButtonRow}>
+          <TouchableOpacity
+            style={styles.qrShortcutBtn}
+            onPress={() => navigation.navigate("CIDFlow", { isAddContact: true, startScreen: 46 })}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="camera" size={24} color={COLORS.primary} />
+            <Text style={styles.qrShortcutText}>Scan Camera</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.qrShortcutBtn}
+            onPress={() => navigation.navigate("CIDFlow", { isAddContact: true, startScreen: 46, autoPick: true })}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="images" size={24} color={COLORS.primary} />
+            <Text style={styles.qrShortcutText}>From Gallery</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Error Message */}
@@ -512,6 +591,25 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontWeight: "600",
   },
+  qrInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.md,
+  },
+  shareQRButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primaryLight,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    borderRadius: RADIUS.md,
+    gap: SPACING.sm,
+  },
+  shareQRText: {
+    ...TYPOGRAPHY.body3,
+    color: COLORS.primary,
+    fontWeight: "700",
+  },
   cidHint: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -682,5 +780,40 @@ const styles = StyleSheet.create({
   foundCid: {
     ...TYPOGRAPHY.body3,
     color: COLORS.textMuted,
+  },
+  qrShortcutContainer: {
+    marginBottom: SPACING.lg,
+    backgroundColor: COLORS.white,
+    padding: SPACING.md,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  qrShortcutTitle: {
+    ...TYPOGRAPHY.body3,
+    color: COLORS.textMuted,
+    marginBottom: SPACING.md,
+    fontWeight: "600",
+  },
+  qrButtonRow: {
+    flexDirection: "row",
+    gap: SPACING.md,
+  },
+  qrShortcutBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.primary + "10",
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.primary + "30",
+    gap: SPACING.sm,
+  },
+  qrShortcutText: {
+    ...TYPOGRAPHY.body3,
+    color: COLORS.primary,
+    fontWeight: "700",
   },
 });

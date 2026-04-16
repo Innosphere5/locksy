@@ -286,6 +286,14 @@ class SocketService {
   }
 
   /**
+   * Direct Add QR Contact
+   */
+  addContactDirect(toCid) {
+    if (!this.socket) return;
+    this.socket.emit("contact:add_direct", { fromCid: this.userCid, toCid });
+  }
+
+  /**
    * Send message
    */
   sendMessage(roomId, message, senderNickname) {

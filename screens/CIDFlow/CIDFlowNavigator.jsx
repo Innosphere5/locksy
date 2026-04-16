@@ -22,9 +22,9 @@ import Screen49ContactAdded from "./Screen49ContactAdded";
  * Onboarding: 42 (Generating) → 43 (Generated) → 44 (Identity) → 45 (QR)
  * Add Contact: 44 (Identity) → 45 (QR) → 46 (Scanner) → 48 (Enter CID) → 47 (Found) → 49 (Added)
  */
-const CIDFlowNavigatorContent = ({ onFlowComplete, isAddContact = false }) => {
-  // Start at screen 44 (MyIdentity) if adding contact, otherwise screen 42 (Generating)
-  const initialScreen = isAddContact ? 44 : 42;
+const CIDFlowNavigatorContent = ({ onFlowComplete, isAddContact = false, startScreen, route }) => {
+  // Use startScreen if provided, else determine based on isAddContact
+  const initialScreen = startScreen || (isAddContact ? 44 : 42);
   const [screen, setScreen] = useState(initialScreen);
 
   const handleScreenChange = (screenNumber) => {
@@ -58,8 +58,9 @@ const CIDFlowNavigatorContent = ({ onFlowComplete, isAddContact = false }) => {
     ),
     46: (
       <Screen46Scanner
-        onNext={() => handleScreenChange(48)}
-        onBack={() => handleScreenChange(45)}
+        onNext={() => handleScreenChange(47)} // Scan Found -> Goes to Screen 47
+        onBack={startScreen === 46 ? handleFlowComplete : () => handleScreenChange(45)}
+        route={route}
       />
     ),
     47: (
@@ -144,15 +145,19 @@ const CIDFlowNavigator = ({ route, navigation }) => {
   const params = route?.params || {};
   const isOnboarding = params.isOnboarding || false;
   const isAddContact = params.isAddContact || false;
+  const startScreen = params.startScreen || null;
 
   const handleFlowComplete = () => {
     if (navigation) {
       if (isOnboarding) {
         // From onboarding, go to next step
         navigation.navigate("SetupMasterPassword");
-      } else {
-        // From chat screen, go back
+      } else if (navigation.canGoBack()) {
+        // From chat screen, go back if possible
         navigation.goBack();
+      } else {
+        // Fallback: if we can't go back, go to main dashboard
+        navigation.navigate("Chats");
       }
     }
   };
@@ -161,6 +166,8 @@ const CIDFlowNavigator = ({ route, navigation }) => {
     <CIDFlowNavigatorContent
       onFlowComplete={handleFlowComplete}
       isAddContact={isAddContact}
+      startScreen={startScreen}
+      route={route}
     />
   );
 };

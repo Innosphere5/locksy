@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import {
   SafeAreaView,
   View,
@@ -7,154 +7,112 @@ import {
   StatusBar,
   TouchableOpacity,
   Share,
+  Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import QRCode from 'react-native-qrcode-svg';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { COLORS } from '../../theme/colors';
 import { NavBar, PrimaryButton } from '../../component/CIDFlowShared';
 import { CIDFlowStyles } from '../common/CIDFlowStyles';
 import { useCIDContext } from '../../context/CIDContext';
 
 /**
- * QR Code Component - Generates deterministic pattern from CID
- */
-const QRCodeMock = ({ cid }) => {
-  const GRID_SIZE = 15;
-  const CELL = 10;
-
-  const generatePattern = () => {
-    const cells = Array(GRID_SIZE * GRID_SIZE).fill(false);
-    const cidHash = cid.split('').reduce((h, c, i) => {
-      return ((h << 5) - h) + c.charCodeAt(0) + i;
-    }, 0);
-
-    // Finder patterns (3 corners) - QR code requirement
-    const setCorner = (startRow, startCol) => {
-      for (let r = startRow; r < startRow + 7; r++) {
-        for (let c = startCol; c < startCol + 7; c++) {
-          if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) {
-            const isBorder = r === startRow + 6 || c === startCol + 6;
-            const isInner = r > startRow + 1 && r < startRow + 5 && 
-                          c > startCol + 1 && c < startCol + 5;
-            cells[r * GRID_SIZE + c] = !isBorder && !isInner;
-          }
-        }
-      }
-    };
-
-    setCorner(0, 0);
-    setCorner(0, GRID_SIZE - 7);
-    setCorner(GRID_SIZE - 7, 0);
-
-    // Timing patterns
-    for (let i = 8; i < GRID_SIZE - 8; i++) {
-      cells[6 * GRID_SIZE + i] = i % 2 === 0;
-      cells[i * GRID_SIZE + 6] = i % 2 === 0;
-    }
-
-    // Data area with CID distribution
-    for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
-      const r = Math.floor(i / GRID_SIZE);
-      const c = i % GRID_SIZE;
-
-      const isReserved = 
-        (r < 9 && c < 9) || 
-        (r < 9 && c >= GRID_SIZE - 8) || 
-        (r >= GRID_SIZE - 8 && c < 9);
-
-      if (!isReserved && !cells[i]) {
-        cells[i] = (cidHash * (i + 1) * 7919) % 17 > 8;
-      }
-    }
-
-    return cells;
-  };
-
-  const cells = generatePattern();
-
-  return (
-    <View style={CIDFlowStyles.qrWrapper}>
-      <View style={CIDFlowStyles.qrInner}>
-        {Array.from({ length: GRID_SIZE }, (_, row) => (
-          <View key={row} style={{ flexDirection: 'row' }}>
-            {Array.from({ length: GRID_SIZE }, (_, col) => (
-              <View
-                key={col}
-                style={{
-                  width: CELL,
-                  height: CELL,
-                  backgroundColor: cells[row * GRID_SIZE + col]
-                    ? COLORS.dark
-                    : COLORS.white,
-                  borderWidth: 0.5,
-                  borderColor: COLORS.border,
-                }}
-              />
-            ))}
-          </View>
-        ))}
-        {/* Lock Badge Overlay */}
-        <View style={CIDFlowStyles.qrOverlay}>
-          <View style={CIDFlowStyles.qrLockBadge}>
-            <Text style={CIDFlowStyles.qrLockIcon}>🔒</Text>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
-};
-
-/**
  * Screen 45: My QR Code
- * Displays user's QR code with share and copy options
+ * Displays user's QR code using SVG-based generator (Expo Go compatible)
  */
 const Screen45QRCode = ({ onNext, onBack }) => {
-  const { userCID } = useCIDContext();
-  const userName = 'Phantom_X';
-  const userAvatar = '👤';
+  const { userCID, userNickname, userAvatar } = useCIDContext();
+  const qrRef = useRef();
 
-  const handleShareQR = async () => {
-    try {
-      await Share.share({
-        message: `Scan my QR code or add my CID ${userCID} on Locksy to connect!`,
-        title: `${userName}'s Locksy QR Code`,
-      });
-    } catch (error) {
-      console.error('Share error:', error);
-    }
+  // ─── Share QR Image ────────────────────────────────────────
+  const handleShareQR = () => {
+    if (!qrRef.current) return;
+
+    // react-native-qrcode-svg provides a toDataURL method
+    qrRef.current.toDataURL(async (dataURL) => {
+      try {
+        const fileName = `Locksy_QR_${userCID}.png`;
+        const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+
+        // Write to file (dataURL is already base64)
+        await FileSystem.writeAsStringAsync(fileUri, dataURL, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        // Share the file
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'image/png',
+            dialogTitle: `${userNickname}'s Locksy QR Code`,
+            UTI: 'public.png',
+          });
+        } else {
+          // Fallback to text sharing
+          await Share.share({
+            message: `Scan my QR code or add my CID: ${userCID} on Locksy to connect!`,
+          });
+        }
+      } catch (error) {
+        console.error('[QRCode] Share error:', error);
+        Alert.alert('Share Failed', 'Unable to share QR code image.');
+      }
+    });
   };
 
   const handleCopyCID = () => {
     console.log('CID copied:', userCID);
+    Alert.alert('Success', 'CID copied to clipboard');
   };
 
   return (
     <SafeAreaView style={CIDFlowStyles.safeAreaWhite}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
-      <NavBar title="My QR Code" onBack={onBack} rightIcon="☐" />
+      <NavBar title="My QR Code" onBack={onBack} />
 
       <ScrollView contentContainerStyle={CIDFlowStyles.scrollContent}>
         {/* QR Card */}
         <View style={CIDFlowStyles.qrCard}>
           {/* Avatar */}
           <View style={CIDFlowStyles.avatarCircle}>
-            <Text style={CIDFlowStyles.avatarIcon}>{userAvatar}</Text>
+            <Text style={CIDFlowStyles.avatarIcon}>{userAvatar || '👤'}</Text>
           </View>
 
           {/* Username */}
-          <Text style={CIDFlowStyles.profileName}>{userName}</Text>
+          <Text style={CIDFlowStyles.profileName}>{userNickname || 'Anonymous'}</Text>
 
-          {/* QR Code */}
-          <QRCodeMock cid={userCID} />
+          {/* Real SVG-based QR Code */}
+          <View style={CIDFlowStyles.qrWrapper}>
+            <View style={[CIDFlowStyles.qrInner, { padding: 15, backgroundColor: COLORS.white }]}>
+              <QRCode
+                value={userCID || 'ERROR'}
+                size={200}
+                color={COLORS.dark}
+                backgroundColor={COLORS.white}
+                quietZone={10}
+                getRef={(ref) => (qrRef.current = ref)}
+              />
+              
+              {/* Lock Badge overlay managed by CIDFlowStyles */}
+              <View style={[CIDFlowStyles.qrOverlay, { position: 'absolute', top: '50%', left: '50%', marginLeft: -15, marginTop: -15 }]}>
+                <View style={[CIDFlowStyles.qrLockBadge, { width: 30, height: 30, borderRadius: 15, backgroundColor: COLORS.white, elevation: 3 }]}>
+                  <Text style={{ fontSize: 16 }}>🔒</Text>
+                </View>
+              </View>
+            </View>
+          </View>
 
           {/* CID Below QR */}
           <Text style={CIDFlowStyles.profileCID}>{userCID}</Text>
           <Text style={CIDFlowStyles.profileSub}>
-            Scan to add {userName} on Locksy
+            Scan to add {userNickname} on Locksy
           </Text>
         </View>
 
         {/* Share QR Button */}
         <PrimaryButton 
-          label="📤 Share QR Code" 
+          label="📤 Share QR Image" 
           onPress={handleShareQR}
           style={{ marginBottom: 12 }}
         />
