@@ -16,12 +16,14 @@ import {
   Keyboard,
   useWindowDimensions,
   Dimensions,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme/colors';
 import AttachMediaModal from '../modals/AttachMediaModal';
 import AutoCloseModal from '../modals/AutoCloseModal';
 import socketService from '../../utils/socketService';
+import messageStorage from '../../utils/messageStorage';
 import { useCIDContext } from '../../context/CIDContext';
 
 // ============================================================================
@@ -214,9 +216,13 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
   return (
     <View style={[styles.messageRow, isSent && styles.sentRow]}>
       {/* Avatar for received messages */}
-      {!isSent && msg.avatar && (
-        <View style={[styles.smallAvatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
-          <Text style={{ fontSize: responsiveFontSize(16, screenWidth) }}>{msg.avatar}</Text>
+      {!isSent && (
+        <View style={[styles.smallAvatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, overflow: 'hidden' }]}>
+          {msg.avatar && msg.avatar.startsWith('http') || msg.avatar.startsWith('file') || msg.avatar.startsWith('content') ? (
+            <Image source={{ uri: msg.avatar }} style={{ width: avatarSize, height: avatarSize }} />
+          ) : (
+            <Text style={{ fontSize: responsiveFontSize(16, screenWidth) }}>{msg.avatar || '👤'}</Text>
+          )}
         </View>
       )}
 
@@ -243,6 +249,12 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
         onPress={() => onSelect && onSelect(msg.id)}
         style={{ maxWidth: bubbleMaxWidth }}
       >
+        {/* Nickname for received messages */}
+        {!isSent && msg.senderNickname && (
+          <Text style={[styles.senderNickname, { fontSize: smallFontSize, marginBottom: 2 }]}>
+            {msg.senderNickname}
+          </Text>
+        )}
         <View
           style={[
             styles.bubble,
@@ -670,149 +682,89 @@ export default function ChatMessageScreen({ navigation, route }) {
   const messagesRef = useRef([]);
   const messageListenerRef = useRef(null);
 
-  // Initialize socket listener for incoming messages
+  // Initialize room and load history
   useEffect(() => {
-    if (!roomId) {
-      console.warn("[ChatMessage] No roomId available yet");
-      return;
-    }
-
-    console.log("[ChatMessage] Setting up message listener for room:", roomId);
-    console.log("[ChatMessage] Socket connected:", socketService.isConnected);
-    console.log("[ChatMessage] User CID:", userCID);
+    if (!roomId) return;
 
     let isMounted = true;
 
-    const initializeRoom = async () => {
-      try {
-        // Wait for socket to be connected
-        console.log("[ChatMessage] Checking socket connection...");
-        if (!socketService.isConnected) {
-          console.log("[ChatMessage] Socket not connected, waiting...");
-          await socketService.waitForConnection(15000);
-          console.log("[ChatMessage] Socket is now ready");
-        } else {
-          console.log("[ChatMessage] Socket already connected");
-        }
-
-        // Join the room
-        if (!isMounted) return;
-        console.log("[ChatMessage] Attempting to join room...");
-        await socketService.joinRoom(roomId);
-        console.log("[ChatMessage] Successfully joined room");
-      } catch (error) {
-        console.error("[ChatMessage] Failed to initialize room:", error);
-        if (isMounted) {
-          alert("Failed to initialize chat: " + error.message);
-        }
-        return;
+    const initialize = async () => {
+      // 1. Load from local storage immediately for fast UI
+      const localMsgs = await messageStorage.getMessages(roomId);
+      if (isMounted && localMsgs.length > 0) {
+        const formatted = localMsgs.map(m => formatSocketMsg(m));
+        setMessages(formatted);
       }
 
-      // Now register the message listener
-      if (!isMounted) return;
-      
-      // Listen for incoming messages
-      const handleMessageReceived = (message) => {
-        if (!isMounted) return;
+      // 2. Ensure socket is ready and joined
+      try {
+        await socketService.waitForConnection();
+        await socketService.joinRoom(roomId);
         
-        console.log("[ChatMessage] Socket event 'message:received' fired:", message);
-        console.log("[ChatMessage] Checking message roomId:", message.roomId, "vs current roomId:", roomId);
-        
-        if (message.roomId === roomId) {
-          console.log("[ChatMessage] Message is for this room, adding to UI...");
-          
-          const newMsg = {
-            id: message.id,
-            sender: userCID === message.senderCid ? 'sent' : 'received',
-            text: message.message,
-            time: new Date(message.timestamp).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            }),
-            type: 'text',
-            reactions: [],
-            readStatus: userCID === message.senderCid ? 'delivered' : undefined,
-            isForwarded: false,
-            senderCid: message.senderCid,
-            senderNickname: message.senderNickname,
-            avatar: message.senderCid !== userCID ? contactAvatar : userAvatarSafe,
-          };
-          
-          console.log("[ChatMessage] Adding message to state:", newMsg);
-          setMessages(prev => {
-            console.log("[ChatMessage] Previous message count:", prev.length, "Adding one more...");
-            return [...prev, newMsg];
-          });
-          
-          // Scroll to bottom
-          setTimeout(() => {
-            if (isMounted) {
-              console.log("[ChatMessage] Scrolling to end");
-              flatListRef.current?.scrollToEnd({ animated: true });
-            }
-          }, 50);
-        } else {
-          console.log("[ChatMessage] Message is not for this room, ignoring");
+        // 3. Sync with server for any missed messages
+        const history = await socketService.getChatHistory(roomId);
+        if (history && history.messages && isMounted) {
+           const formatted = history.messages.map(m => formatSocketMsg(m));
+           setMessages(formatted);
+           // Save to local storage (duplicates handled by saveMessage)
+           for (const m of history.messages) {
+             await messageStorage.saveMessage(roomId, m);
+           }
         }
-      };
-
-      // Store handler for cleanup
-      messageListenerRef.current = handleMessageReceived;
-
-      // Register the listener
-      console.log("[ChatMessage] Registering socket listener");
-      socketService.onMessageReceived(handleMessageReceived);
-
-      // Load chat history
-      loadChatHistory();
+      } catch (err) {
+        console.warn("[ChatMessage] Sync/Join failed:", err);
+      }
     };
 
-    initializeRoom();
+    // 4. Subscribe to new messages using multiplexed listener
+    const unsubscribe = socketService.on("message:received", (message) => {
+      if (isMounted && message.roomId === roomId) {
+        const newMsg = formatSocketMsg(message);
+        setMessages(prev => {
+          // Deduplicate: If this is a message we sent, it might match a 'temp-' message
+          if (newMsg.sender === 'sent') {
+             const tempIndex = prev.findIndex(m => m.id.startsWith('temp-') && m.text === newMsg.text);
+             if (tempIndex !== -1) {
+                // Replace temp message with the official server one (has correct ID and timestamp)
+                const next = [...prev];
+                next[tempIndex] = newMsg;
+                return next;
+             }
+          }
+
+          if (prev.some(m => m.id === newMsg.id)) return prev;
+          return [...prev, newMsg];
+        });
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      }
+    });
+
+    initialize();
 
     return () => {
       isMounted = false;
-      console.log("[ChatMessage] Cleaning up message listener");
-      // Cleanup listener
-      if (messageListenerRef.current) {
-        socketService.socket?.off("message:received", messageListenerRef.current);
-        messageListenerRef.current = null;
-      }
+      unsubscribe();
     };
-  }, [roomId, userCID, contactAvatar, userAvatarSafe]);
+  }, [roomId]);
 
-  // Load chat history from server
-  const loadChatHistory = async () => {
-    if (!roomId) return;
-    
-    try {
-      console.log("[ChatMessage] Loading history for room:", roomId);
-      const history = await socketService.getChatHistory(roomId);
-      
-      if (history && history.messages) {
-        const formattedMessages = history.messages.map(msg => ({
-          id: msg.id,
-          sender: userCID === msg.senderCid ? 'sent' : 'received',
-          text: msg.message,
-          time: new Date(msg.timestamp).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
-          type: 'text',
-          reactions: [],
-          readStatus: msg.status,
-          isForwarded: false,
-          senderCid: msg.senderCid,
-          senderNickname: msg.senderNickname,
-          avatar: msg.senderCid !== userCID ? contactAvatar : userAvatarSafe,
-        }));
-        
-        setMessages(formattedMessages);
-        console.log("[ChatMessage] Loaded", formattedMessages.length, "messages");
-      }
-    } catch (error) {
-      console.error("[ChatMessage] Error loading history:", error);
-    }
-  };
+  // Helper to format socket message to UI message
+  const formatSocketMsg = (message) => ({
+    id: message.id,
+    sender: userCID === message.senderCid ? 'sent' : 'received',
+    text: message.message,
+    time: new Date(message.timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+    type: 'text',
+    reactions: [],
+    readStatus: userCID === message.senderCid ? 'delivered' : undefined,
+    isForwarded: false,
+    senderCid: message.senderCid,
+    senderNickname: message.senderNickname,
+    avatar: message.senderCid !== userCID ? contactAvatar : userAvatarSafe,
+  });
+
 
   // Screen dimensions object for passing to child components
   const screenDimensions = { screenWidth, screenHeight };
@@ -923,67 +875,30 @@ export default function ChatMessageScreen({ navigation, route }) {
 
   // Handle sending message
   const handleSendMessage = async () => {
-    if (!inputText.trim()) {
-      console.log("[ChatMessage] Ignoring empty message");
-      return;
-    }
-    
-    if (!roomId || !userCID) {
-      console.error("[ChatMessage] Cannot send - roomId:", roomId, "userCID:", userCID);
-      alert("Error: Chat not properly initialized");
-      return;
-    }
+    if (!inputText.trim()) return;
+    if (!roomId) return;
 
-    setIsSending(true);
     const messageText = inputText.trim();
+    setInputText('');
     
+    // Add to UI immediately
+    const tempMsg = {
+      id: "temp-" + Date.now(),
+      sender: 'sent',
+      text: messageText,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      type: 'text',
+      readStatus: 'sending',
+      avatar: userAvatarSafe,
+    };
+    
+    setMessages(prev => [...prev, tempMsg]);
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
     try {
-      console.log("[ChatMessage] Sending message to room:", roomId);
-      console.log("[ChatMessage] Message text:", messageText);
-      console.log("[ChatMessage] Sender CID:", userCID);
-      console.log("[ChatMessage] Sender Nickname:", userNickname);
-      
-      // Send via socket.io
       socketService.sendMessage(roomId, messageText, userNickname);
-      
-      // Add to local messages immediately for UX
-      const newMsg = {
-        id: Date.now().toString(),
-        sender: 'sent',
-        text: messageText,
-        time: new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        type: 'text',
-        reactions: [],
-        readStatus: 'sending',
-        isForwarded: false,
-        senderCid: userCID,
-        senderNickname: userNickname,
-        avatar: userAvatarSafe,
-      };
-      
-      console.log("[ChatMessage] Adding message to local state:", newMsg);
-      setMessages(prev => {
-        console.log("[ChatMessage] Current messages before adding:", prev.length);
-        return [...prev, newMsg];
-      });
-      
-      setInputText('');
-      
-      // Scroll to end
-      setTimeout(() => {
-        console.log("[ChatMessage] Scrolling to end after send");
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 50);
-      
-      console.log("[ChatMessage] Message sent successfully");
     } catch (error) {
       console.error("[ChatMessage] Error sending message:", error);
-      alert("Failed to send message: " + error.message);
-    } finally {
-      setIsSending(false);
     }
   };
 
@@ -1093,11 +1008,19 @@ export default function ChatMessageScreen({ navigation, route }) {
                     width: responsiveSize(40, screenWidth),
                     height: responsiveSize(40, screenWidth),
                     borderRadius: responsiveSize(20, screenWidth),
+                    overflow: 'hidden',
                   }
                 ]}>
-                  <Text style={{ fontSize: responsiveFontSize(20, screenWidth) }}>
-                    {contactAvatar}
-                  </Text>
+                  {contactAvatar && (contactAvatar.startsWith('http') || contactAvatar.startsWith('file') || contactAvatar.startsWith('content')) ? (
+                    <Image 
+                      source={{ uri: contactAvatar }} 
+                      style={{ width: responsiveSize(40, screenWidth), height: responsiveSize(40, screenWidth) }} 
+                    />
+                  ) : (
+                    <Text style={{ fontSize: responsiveFontSize(20, screenWidth) }}>
+                      {contactAvatar}
+                    </Text>
+                  )}
                 </View>
                 <View style={[
                   styles.onlineIndicator,
@@ -1449,6 +1372,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.avatar.blue,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  senderNickname: {
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+    marginBottom: 2,
+    marginLeft: 4,
   },
   selectCheckbox: {
     borderWidth: 2,

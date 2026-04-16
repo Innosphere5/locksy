@@ -46,6 +46,7 @@ export default function AddContactByCIDScreen({ navigation, route }) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [foundUser, setFoundUser] = useState(null); // { cid, nickname, avatar, status }
   const [showMyQR, setShowMyQR] = useState(false);
 
   // ─── Format CID with visual separators ────────────────────
@@ -73,6 +74,7 @@ export default function AddContactByCIDScreen({ navigation, route }) {
   const handleClearInput = () => {
     setOtherUserCid("");
     setError("");
+    setFoundUser(null);
   };
 
   // ─── Validate CID format ──────────────────────────────────
@@ -81,13 +83,12 @@ export default function AddContactByCIDScreen({ navigation, route }) {
     return /^[A-Z0-9]{6}$/.test(cid.trim().toUpperCase());
   };
 
-  // ─── Search and add contact ────────────────────────────────
-  const handleAddContact = async () => {
-    // Reset messages
+  // ─── Step 1: Search for user ────────────────────────────────
+  const handleSearchUser = async () => {
     setError("");
     setSuccessMessage("");
+    setFoundUser(null);
 
-    // Validate inputs
     if (!userCID) {
       setError("⚠️  Your CID is not loaded. Please try again.");
       return;
@@ -99,70 +100,39 @@ export default function AddContactByCIDScreen({ navigation, route }) {
     }
 
     if (!isValidCID(otherUserCid)) {
-      setError(
-        "⚠️  Invalid CID format. CID must be exactly 6 alphanumeric characters (A-Z, 0-9)",
-      );
+      setError("⚠️  Invalid CID format. CID must be exactly 6 alphanumeric characters.");
       return;
     }
 
-    if (otherUserCid.toLowerCase() === userCID.toLowerCase()) {
-      setError("⚠️  You cannot add yourself as a contact");
+    if (otherUserCid.toUpperCase() === userCID.toUpperCase()) {
+      setError("⚠️  You cannot add yourself");
       return;
     }
 
-    // Start loading
     setIsLoading(true);
     Keyboard.dismiss();
 
     try {
-      console.log(`[AddContact] Searching for: ${otherUserCid}`);
-
-      // Call Socket service to search for contact
-      const result = await socketService.searchAndAddContact(
-        otherUserCid.trim(),
-      );
-
-      console.log("[AddContact] Contact found:", result.otherUser);
-
-      // Add contact to state immediately for responsiveness
-      addContact({
-        cid: result.otherUser.cid,
-        nickname: result.otherUser.nickname,
-        avatar: result.otherUser.avatar,
-        status: result.otherUser.status || "offline",
-        verified: true,
-        roomId: result.roomId,
-      });
-
-      // Success!
-      setSuccessMessage(
-        `✅ Contact "${result.otherUser.nickname}" has been added!`,
-      );
-      setOtherUserCid("");
-
-      // Navigate to chat room after 1.5 seconds
-      setTimeout(() => {
-        navigation.replace("ChatMessage", {
-          chatId: result.roomId,
-          contactName: result.otherUser.nickname,
-          contactCID: result.otherUser.cid,
-          contactAvatar: result.otherUser.avatar || '👤',
-        });
-      }, 1500);
+      const { otherUser } = await socketService.searchContact(otherUserCid.toUpperCase());
+      setFoundUser(otherUser);
     } catch (err) {
-      console.error("[AddContact] Error:", err.message);
+      setError(err.message === "User not found" ? "👤 No user found with this CID." : `❌ ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-      const errorMessages = {
-        "User not found":
-          "👤 No user found with this CID. Check and try again.",
-        "Contact not found":
-          "👤 No user found with this CID. Check and try again.",
-        "Socket not connected":
-          "🔌 Connection lost. Please check your internet.",
-        "Search timeout": "⏱️  Request timed out. Please try again.",
-      };
-
-      setError(errorMessages[err.message] || `❌ Error: ${err.message}`);
+  // ─── Step 2: Send Connection Request ────────────────────────
+  const handleSendRequest = async () => {
+    if (!foundUser) return;
+    
+    setIsLoading(true);
+    try {
+      await socketService.sendConnectionRequest(foundUser.cid);
+      setSuccessMessage(`✅ Request sent to "${foundUser.nickname}"!`);
+      // Optional: keep foundUser but change button status
+    } catch (err) {
+      setError(`❌ Failed to send request: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -309,32 +279,63 @@ export default function AddContactByCIDScreen({ navigation, route }) {
         </View>
       )}
 
-      {/* Add Button */}
-      <TouchableOpacity
-        style={[
-          styles.addButton,
-          (isLoading || !otherUserCid.trim()) && styles.addButtonDisabled,
-        ]}
-        onPress={handleAddContact}
-        disabled={isLoading || !otherUserCid.trim()}
-        activeOpacity={0.8}
-      >
-        {isLoading ? (
-          <>
+      {/* Found User Profile */}
+      {foundUser && !successMessage && (
+        <View style={styles.foundUserCard}>
+          <View style={styles.foundAvatar}>
+            <Text style={{ fontSize: 40 }}>{foundUser.avatar || "👤"}</Text>
+          </View>
+          <View style={styles.foundInfo}>
+            <Text style={styles.foundNickname}>{foundUser.nickname}</Text>
+            <Text style={styles.foundCid}>{foundUser.cid}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Dynamic Action Button */}
+      {foundUser && !successMessage ? (
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={handleSendRequest}
+          disabled={isLoading}
+          activeOpacity={0.8}
+        >
+          {isLoading ? (
             <ActivityIndicator color={COLORS.white} size="small" />
-            <Text style={styles.addButtonText}>Searching...</Text>
-          </>
-        ) : (
-          <>
-            <MaterialCommunityIcons
-              name="plus"
-              size={20}
-              color={COLORS.white}
-            />
-            <Text style={styles.addButtonText}>Add Contact</Text>
-          </>
-        )}
-      </TouchableOpacity>
+          ) : (
+            <>
+              <MaterialCommunityIcons name="send" size={20} color={COLORS.white} />
+              <Text style={styles.addButtonText}>Send Connection Request</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          style={[
+            styles.addButton,
+            (isLoading || !otherUserCid.trim()) && styles.addButtonDisabled,
+          ]}
+          onPress={handleSearchUser}
+          disabled={isLoading || !otherUserCid.trim() || !!successMessage}
+          activeOpacity={0.8}
+        >
+          {isLoading ? (
+            <>
+              <ActivityIndicator color={COLORS.white} size="small" />
+              <Text style={styles.addButtonText}>Searching...</Text>
+            </>
+          ) : (
+            <>
+              <MaterialCommunityIcons
+                name="magnify"
+                size={20}
+                color={COLORS.white}
+              />
+              <Text style={styles.addButtonText}>{successMessage ? "Done" : "Search User"}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
 
       {/* Tips */}
       <View style={styles.tipsBox}>
@@ -649,5 +650,37 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.body3,
     color: COLORS.text,
     marginBottom: SPACING.xs,
+  },
+  foundUserCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    marginBottom: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOWS.sm,
+  },
+  foundAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: COLORS.primaryLight,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: SPACING.md,
+  },
+  foundInfo: {
+    flex: 1,
+  },
+  foundNickname: {
+    ...TYPOGRAPHY.h6,
+    color: COLORS.text,
+    fontWeight: "700",
+  },
+  foundCid: {
+    ...TYPOGRAPHY.body3,
+    color: COLORS.textMuted,
   },
 });

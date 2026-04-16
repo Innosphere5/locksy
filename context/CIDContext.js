@@ -39,7 +39,7 @@ import {
   nukeAllData,
   loadContacts,
   saveContacts,
-  addContact,
+  addContact as saveContactToStorage,
 } from "../utils/secureStorage";
 import socketService from "../utils/socketService";
 import AppConfig from "../config/appConfig";
@@ -58,6 +58,7 @@ export const CIDProvider = ({ children }) => {
 
   // ── Contact / CID Flow State ─────────────────────────────────────
   const [contacts, setContacts] = useState([]);
+  const [pendingRequests, setPendingRequests] = useState([]); // Array of { fromCid, fromNickname, fromAvatar }
   const [currentContact, setCurrentContact] = useState(null);
   const [scannedCID, setScannedCID] = useState(null);
   const [enteredCID, setEnteredCID] = useState(["", "", "", "", "", ""]);
@@ -84,7 +85,17 @@ export const CIDProvider = ({ children }) => {
       try {
         const savedContacts = await loadContacts();
         console.log('[CIDContext] Loaded contacts from storage:', savedContacts.length);
-        setContacts(savedContacts);
+        
+        // De-duplicate just in case storage has redundant entries
+        const uniqueContacts = [];
+        const seen = new Set();
+        for (const c of savedContacts) {
+           if (!seen.has(c.cid)) {
+             seen.add(c.cid);
+             uniqueContacts.push(c);
+           }
+        }
+        setContacts(uniqueContacts);
       } catch (error) {
         console.error('[CIDContext] Error loading contacts:', error);
       }
@@ -116,32 +127,39 @@ export const CIDProvider = ({ children }) => {
 
         console.log("[CIDContext] Socket.io initialized and user registered");
 
-        // Listen for incoming contact notifications
-        socketService.onContactAdded((data) => {
-          console.log("[CIDContext] New contact added notification:", data);
+        // Unified event listeners using the new multiplexed socketService
+        socketService.on("contact:request", (data) => {
+          console.log("[CIDContext] Received contact request from:", data.fromNickname);
+          setPendingRequests(prev => {
+            if (prev.some(r => r.fromCid === data.fromCid)) return prev;
+            return [...prev, data];
+          });
+        });
+
+        socketService.on("contact:accepted", (data) => {
+          console.log("[CIDContext] Connection accepted with:", data.userA === userCID ? data.accepter.nickname : data.requester.nickname);
+          
+          const otherUser = data.userA === userCID ? data.accepter : data.requester;
+          
           const newContact = {
-            cid: data.newContact.cid,
-            nickname: data.newContact.nickname,
-            avatar: data.newContact.avatar,
-            status: data.newContact.status,
+            cid: otherUser.cid,
+            nickname: otherUser.nickname,
+            avatar: otherUser.avatar,
+            status: "online",
             verified: true,
             addedAt: new Date().toISOString(),
             roomId: data.roomId,
           };
-          setContacts((prev) => [...prev, newContact]);
-          // Persist the new contact
-          addContact(newContact).catch(err => 
-            console.error('[CIDContext] Failed to persist contact:', err)
-          );
+          
+          // Single call to addContact (context version) handles state + persistence
+          addContact(newContact);
+
+          // Remove from pending if it was there
+          setPendingRequests(prev => prev.filter(r => r.fromCid !== otherUser.cid));
         });
 
-        // Listen for user status changes
-        socketService.onUserStatusChanged((data) => {
-          console.log(
-            "[CIDContext] User status changed:",
-            data.cid,
-            data.status,
-          );
+        socketService.on("user:status", (data) => {
+          console.log("[CIDContext] User status changed:", data.cid, data.status);
           setContacts((prev) =>
             prev.map((contact) =>
               contact.cid === data.cid
@@ -150,6 +168,8 @@ export const CIDProvider = ({ children }) => {
             ),
           );
         });
+
+        // Auto-refresh chat list when new message received (handled globally by socketService persistence)
       } catch (error) {
         console.error("[CIDContext] Socket.io initialization failed:", error);
         setSocketError(error.message || "Connection failed");
@@ -379,32 +399,58 @@ export const CIDProvider = ({ children }) => {
   // Contact Management with Socket.io
   // ────────────────────────────────────────────────────────────────
   const addContact = useCallback((contact) => {
-    // Add contact to state
     const newContact = {
       ...contact,
       id: contact.cid, // Use CID as unique identifier
       addedAt: new Date().toISOString(),
       verified: contact.verified || false,
     };
-    setContacts((prev) => [...prev, newContact]);
+
+    setContacts((prev) => {
+      if (prev.some(c => c.cid === newContact.cid)) {
+        console.warn("[CIDContext] Contact already exists, skipping state add:", newContact.cid);
+        return prev;
+      }
+      return [...prev, newContact];
+    });
+
+    // Save to permanent storage
+    saveContactToStorage(newContact).catch(err => 
+       console.error("[CIDContext] Storage sync failed:", err)
+    );
+
     console.log("[CIDContext] Contact added:", newContact);
     return newContact;
   }, []);
 
   /**
-   * Search for contact by CID using Socket.io
-   * @param {string} otherCid - Other user's CID
-   * @returns {Promise<{roomId: string, otherUser: object}>}
+   * Discovery search (does not create room)
    */
   const searchContactByCID = useCallback(
     (otherCid) => {
       if (!socketConnected) {
         return Promise.reject(new Error("Socket not connected"));
       }
-      return socketService.searchAndAddContact(otherCid);
+      return socketService.searchContact(otherCid);
     },
     [socketConnected],
   );
+
+  /**
+   * Send connection request
+   */
+  const sendRequest = useCallback((toCid) => {
+    return socketService.sendConnectionRequest(toCid);
+  }, []);
+
+  /**
+   * Accept connection request
+   */
+  const acceptRequest = useCallback((fromCid) => {
+    socketService.acceptConnectionRequest(fromCid);
+    // Remove from local pending state
+    setPendingRequests(prev => prev.filter(r => r.fromCid !== fromCid));
+  }, []);
 
   /**
    * Send message to contact via Socket.io
@@ -473,8 +519,10 @@ export const CIDProvider = ({ children }) => {
     verifyAndUnlock, // login: PBKDF2 decrypt + integrity check
     lock, // clear session key from RAM & disconnect Socket.io
 
-    // Contacts / CID Flow
     contacts,
+    pendingRequests,
+    acceptRequest,
+    sendRequest,
     addContact,
     currentContact,
     setCurrentContact,

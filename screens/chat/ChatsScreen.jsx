@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { COLORS } from "../../theme";
 import { useCalls } from "../../context/CallsContext";
 import { CIDContext } from "../../context/CIDContext";
 import useSocketNavigation from "../../hooks/useSocketNavigation";
+import messageStorage from "../../utils/messageStorage";
 
 function Avatar({ item }) {
   if (item.locked) {
@@ -135,30 +136,52 @@ function ChatRow({ item, onPress, navigation }) {
 export default function ChatsScreen({ navigation }) {
   // Auto-navigate when another user adds you as a contact
   useSocketNavigation();
-  
+
   // Get saved contacts from context
-  const { contacts } = React.useContext(CIDContext);
-  
+  const { contacts, pendingRequests, acceptRequest } = React.useContext(CIDContext);
+
   const [stealthMode, setStealthMode] = useState(true);
   const [search, setSearch] = useState("");
+  const [lastMessages, setLastMessages] = useState({});
+
+  // Load last messages from local storage
+  useEffect(() => {
+    const loadLastMsgs = async () => {
+      const summaries = await messageStorage.getChatListSub();
+      const msgMap = {};
+      summaries.forEach(s => {
+        msgMap[s.roomId] = s;
+      });
+      setLastMessages(msgMap);
+    };
+
+    loadLastMsgs();
+
+    // Subscribe to updates (simple poll for now, or use socket/context triggers)
+    const interval = setInterval(loadLastMsgs, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Transform contacts into display format
-  const formattedChats = contacts.map((contact) => ({
-    id: contact.cid,
-    name: contact.nickname,
-    badge: "E2EE",
-    badgeColor: "#4B7BF5",
-    lastMessage: "Start chatting...",
-    time: null,
-    unread: 0,
-    online: contact.status === "online",
-    avatar: contact.avatar || "👤",
-    avatarBg: "#EEF2FF",
-    locked: false,
-    expires: null,
-    cid: contact.cid,
-    roomId: contact.roomId,
-  }));
+  const formattedChats = contacts.map((contact) => {
+    const lastMsgData = lastMessages[contact.roomId];
+    return {
+      id: contact.cid,
+      name: contact.nickname,
+      badge: "E2EE",
+      badgeColor: "#4B7BF5",
+      lastMessage: lastMsgData ? lastMsgData.lastMessage : "Start chatting...",
+      time: lastMsgData ? new Date(lastMsgData.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+      unread: 0,
+      online: contact.status === "online",
+      avatar: contact.avatar || "👤",
+      avatarBg: "#EEF2FF",
+      locked: false,
+      expires: null,
+      cid: contact.cid,
+      roomId: contact.roomId,
+    };
+  });
 
   const filtered = formattedChats.filter(
     (c) =>
@@ -218,6 +241,30 @@ export default function ChatsScreen({ navigation }) {
           thumbColor="#FFFFFF"
         />
       </View>
+
+      {/* Pending Requests Section */}
+      {pendingRequests.length > 0 && (
+        <View style={styles.requestsContainer}>
+          <Text style={styles.requestsTitle}>Pending Requests ({pendingRequests.length})</Text>
+          {pendingRequests.map((req) => (
+            <View key={req.fromCid} style={styles.requestRow}>
+              <View style={styles.requestAvatar}>
+                <Text style={{ fontSize: 20 }}>{req.fromAvatar || "👤"}</Text>
+              </View>
+              <View style={styles.requestInfo}>
+                <Text style={styles.requestName}>{req.fromNickname}</Text>
+                <Text style={styles.requestCid}>{req.fromCid}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.acceptBtn}
+                onPress={() => acceptRequest(req.fromCid)}
+              >
+                <Text style={styles.acceptBtnText}>Accept</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* Search */}
       <View style={styles.searchContainer}>
@@ -516,4 +563,62 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   navActive: { color: "#3B82F6", fontWeight: "600" },
+
+  // Requests
+  requestsContainer: {
+    backgroundColor: "#FFFFFF",
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  requestsTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748B",
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  requestRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  requestAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#EFF6FF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  requestInfo: {
+    flex: 1,
+  },
+  requestName: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#0F172A",
+  },
+  requestCid: {
+    fontSize: 12,
+    color: "#94A3B8",
+  },
+  acceptBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  acceptBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
 });
