@@ -299,6 +299,7 @@ class SocketService {
   sendMessage(roomId, message, senderNickname) {
     if (!this.socket || !this.userCid) return;
 
+    // message can be a string or an object { type, text, uri, etc }
     this.socket.emit("message:send", {
       roomId,
       message,

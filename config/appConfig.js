@@ -7,7 +7,7 @@
  */
 
 // ⚠️  CONFIGURE YOUR SERVER IP ADDRESS HERE ⚠️
-const SERVER_IP = "192.168.31.172"; // Change to your PC's IP address
+const SERVER_IP = "10.99.91.37"; // Change to your PC's IP address
 const SERVER_PORT = 5000;
 
 const AppConfig = {

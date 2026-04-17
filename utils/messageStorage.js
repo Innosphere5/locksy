@@ -86,9 +86,20 @@ class MessageStorage {
       let chatList = stored ? JSON.parse(stored) : [];
       
       const index = chatList.findIndex(c => c.roomId === roomId);
+      const msgData = lastMessage.message;
+      let summaryText = "Media";
+      
+      if (typeof msgData === 'string') {
+        summaryText = msgData;
+      } else if (msgData && typeof msgData === 'object') {
+        if (msgData.type === 'image') summaryText = "📷 Photo";
+        else if (msgData.type === 'file') summaryText = `📄 Document: ${msgData.name || 'File'}`;
+        else if (msgData.text) summaryText = msgData.text;
+      }
+
       const summary = {
         roomId,
-        lastMessage: lastMessage.text || lastMessage.message || "Media",
+        lastMessage: summaryText,
         timestamp: lastMessage.timestamp || new Date().toISOString(),
         senderNickname: lastMessage.senderNickname,
       };

@@ -18,6 +18,11 @@ import {
   Dimensions,
   Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme/colors';
 import AttachMediaModal from '../modals/AttachMediaModal';
@@ -162,7 +167,7 @@ const REACTION_OPTIONS = ['👍', '❤️', '😂', '😮', '😢'];
 // MESSAGE BUBBLE COMPONENT (RESPONSIVE)
 // ============================================================================
 
-function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, screenDimensions }) {
+function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, screenDimensions, onImagePress, onFilePress }) {
   const isSent = msg.sender === 'sent';
   const isSystem = msg.sender === 'system';
   const { screenWidth, screenHeight } = screenDimensions;
@@ -259,6 +264,7 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
           style={[
             styles.bubble,
             isSent ? styles.sentBubble : styles.receivedBubble,
+            msg.type === 'image' && styles.imageBubble,
             isSelected && styles.bubbleSelected,
             { maxWidth: bubbleMaxWidth }
           ]}
@@ -304,6 +310,51 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
                 View Once · Photo
               </Text>
             </View>
+          ) : msg.type === 'image' ? (
+            <TouchableOpacity 
+              activeOpacity={0.9} 
+              onPress={() => onImagePress && onImagePress(msg.image)}
+              style={styles.imageContainer}
+            >
+              <Image 
+                source={{ uri: msg.image }} 
+                style={[
+                  styles.bubbleImage, 
+                  { 
+                    width: bubbleMaxWidth, 
+                    height: bubbleMaxWidth * 0.75,
+                    borderRadius: RADIUS.md 
+                  }
+                ]} 
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+          ) : msg.type === 'file' ? (
+            <TouchableOpacity 
+              activeOpacity={0.7} 
+              onPress={() => onFilePress && onFilePress(msg)}
+              style={styles.fileContainer}
+            >
+              <View style={styles.fileIconBox}>
+                <Text style={{ fontSize: responsiveFontSize(24, screenDimensions.screenWidth) }}>
+                  {msg.fileName?.toLowerCase().endsWith('.pdf') ? '📕' : '📘'}
+                </Text>
+              </View>
+              <View style={styles.fileInfo}>
+                <Text 
+                  style={[
+                    styles.fileName, 
+                    { color: isSent ? COLORS.sentText : COLORS.receivedText, fontSize: fontSize }
+                  ]} 
+                  numberOfLines={1}
+                >
+                  {msg.fileName || 'Document'}
+                </Text>
+                <Text style={[styles.fileSize, { color: isSent ? 'rgba(255,255,255,0.7)' : COLORS.gray500, fontSize: smallFontSize }]}>
+                  {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : 'Media File'}
+                </Text>
+              </View>
+            </TouchableOpacity>
           ) : (
             <Text
               style={[
@@ -678,6 +729,8 @@ export default function ChatMessageScreen({ navigation, route }) {
   const [showAutoCloseModal, setShowAutoCloseModal] = useState(false);
   const [autocloseTimer, setAutoCloseTimer] = useState(null);
   const [isSending, setIsSending] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const flatListRef = useRef(null);
   const messagesRef = useRef([]);
   const messageListenerRef = useRef(null);
@@ -748,22 +801,36 @@ export default function ChatMessageScreen({ navigation, route }) {
   }, [roomId]);
 
   // Helper to format socket message to UI message
-  const formatSocketMsg = (message) => ({
-    id: message.id,
-    sender: userCID === message.senderCid ? 'sent' : 'received',
-    text: message.message,
-    time: new Date(message.timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-    type: 'text',
-    reactions: [],
-    readStatus: userCID === message.senderCid ? 'delivered' : undefined,
-    isForwarded: false,
-    senderCid: message.senderCid,
-    senderNickname: message.senderNickname,
-    avatar: message.senderCid !== userCID ? contactAvatar : userAvatarSafe,
-  });
+  const formatSocketMsg = (message) => {
+    const isSent = userCID === message.senderCid;
+    const msgData = message.message;
+    
+    // Check if message is an object (media) or string (text)
+    const isImage = msgData && typeof msgData === 'object' && msgData.type === 'image';
+    const isFile = msgData && typeof msgData === 'object' && msgData.type === 'file';
+    
+    return {
+      id: message.id,
+      sender: isSent ? 'sent' : 'received',
+      text: (isImage || isFile) ? '' : (typeof msgData === 'object' ? msgData.text : msgData),
+      image: isImage ? msgData.uri : null,
+      fileUri: isFile ? msgData.uri : null,
+      fileName: isFile ? msgData.name : null,
+      fileSize: isFile ? msgData.size : null,
+      mimeType: isFile ? msgData.mimeType : null,
+      time: new Date(message.timestamp).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      type: isImage ? 'image' : (isFile ? 'file' : 'text'),
+      reactions: [],
+      readStatus: isSent ? 'delivered' : undefined,
+      isForwarded: false,
+      senderCid: message.senderCid,
+      senderNickname: message.senderNickname,
+      avatar: message.senderCid !== userCID ? contactAvatar : userAvatarSafe,
+    };
+  };
 
 
   // Screen dimensions object for passing to child components
@@ -924,20 +991,159 @@ export default function ChatMessageScreen({ navigation, route }) {
   };
 
   // Handle media attachment selection
-  const handleMediaAttach = (mediaInfo) => {
+  const handleMediaAttach = async (mediaInfo) => {
     console.log('Media selected:', mediaInfo);
-    const mediaTypeEmojis = {
-      photo: '📷',
-      video: '🎥',
-      voice: '🎤',
-      file: '📄',
-      once: '👁️',
-      timer: '⏱️',
-    };
+    
+    if (mediaInfo.type === 'photo') {
+      try {
+        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permissionResult.granted === false) {
+          alert("Permission to access camera roll is required!");
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.7,
+          base64: true,
+        });
+        if (!result.canceled) {
+          const asset = result.assets[0];
+          handleSendImage(asset.uri, `data:image/jpeg;base64,${asset.base64}`);
+        }
+      } catch (err) {
+        console.error("[ChatMessage] Image Selection Error:", err);
+      }
+    } else if (mediaInfo.type === 'file') {
+       handleSendFile();
+    } else {
+      const mediaTypeEmojis = {
+        video: '🎥',
+        voice: '🎤',
+        once: '👁️',
+        timer: '⏱️',
+      };
+      const emoji = mediaTypeEmojis[mediaInfo.type] || '📎';
+      alert(`✓ Ready to send ${mediaInfo.label}\n${emoji}`);
+    }
+  };
 
-    const emoji = mediaTypeEmojis[mediaInfo.type] || '📎';
-    alert(`✓ Ready to send ${mediaInfo.label}\n${emoji}`);
-    // Here you can add logic to handle each media type
+  const handleSendFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled) {
+        const asset = result.assets[0];
+        
+        // Read file into base64
+        const base64Data = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: 'base64',
+        });
+
+        const roomId = route?.params?.chatId;
+        if (!roomId) return;
+
+        // Add to UI immediately
+        const tempMsg = {
+          id: "temp-file-" + Date.now(),
+          sender: 'sent',
+          text: '',
+          fileName: asset.name,
+          fileSize: asset.size,
+          fileUri: asset.uri,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: 'file',
+          readStatus: 'sending',
+          avatar: userAvatarSafe,
+        };
+        
+        setMessages(prev => [...prev, tempMsg]);
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
+        socketService.sendMessage(roomId, {
+          type: 'file',
+          uri: `data:${asset.mimeType};base64,${base64Data}`,
+          name: asset.name,
+          size: asset.size,
+          mimeType: asset.mimeType,
+          text: `Sent a file: ${asset.name}`
+        }, userNickname);
+      }
+    } catch (err) {
+      console.error("[ChatMessage] File Selection Error:", err);
+    }
+  };
+
+  const handleOpenFile = async (msg) => {
+    try {
+      let uri = msg.fileUri;
+      if (!uri) return;
+
+      // If the URI is a data URI (base64), we need to save it to a file first
+      if (uri.startsWith('data:')) {
+        const parts = uri.split(',');
+        const base64Content = parts[1];
+        const filename = msg.fileName || 'document.pdf';
+        const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+        
+        await FileSystem.writeAsStringAsync(fileUri, base64Content, {
+          encoding: 'base64',
+        });
+        uri = fileUri;
+      }
+
+      if (Platform.OS === 'android') {
+        const contentUri = await FileSystem.getContentUriAsync(uri);
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: contentUri,
+          flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+          type: msg.mimeType || 'application/pdf',
+        });
+      } else {
+        // iOS: Sharing handles "Open In" correctly
+        await Sharing.shareAsync(uri);
+      }
+    } catch (err) {
+      console.error("[ChatMessage] Error opening file:", err);
+      // Fallback to sharing if direct opening fails
+      try {
+        await Sharing.shareAsync(msg.fileUri);
+      } catch (shareErr) {
+        alert("Could not open file");
+      }
+    }
+  };
+
+  const handleSendImage = async (localUri, base64Data) => {
+    if (!roomId) return;
+
+    // Add to UI immediately
+    const tempMsg = {
+      id: "temp-img-" + Date.now(),
+      sender: 'sent',
+      text: '',
+      image: localUri,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      type: 'image',
+      readStatus: 'sending',
+      avatar: userAvatarSafe,
+    };
+    
+    setMessages(prev => [...prev, tempMsg]);
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
+    try {
+      socketService.sendMessage(roomId, {
+        type: 'image',
+        uri: base64Data,
+        text: 'Sent an image'
+      }, userNickname);
+    } catch (error) {
+      console.error("[ChatMessage] Error sending image:", error);
+    }
   };
 
   // Responsive header styling
@@ -1105,6 +1311,11 @@ export default function ChatMessageScreen({ navigation, route }) {
               isSelected={multiSelectMode ? selectedMessages.includes(item.id) : undefined}
               onSelect={multiSelectMode ? handleSelectMessage : undefined}
               screenDimensions={screenDimensions}
+              onImagePress={(uri) => {
+                setPreviewImage(uri);
+                setShowPreviewModal(true);
+              }}
+              onFilePress={handleOpenFile}
             />
           )}
           contentContainerStyle={[
@@ -1225,6 +1436,38 @@ export default function ChatMessageScreen({ navigation, route }) {
           onClose={() => setShowAutoCloseModal(false)}
           onConfirm={(option) => handleAction('autoclose', option)}
         />
+
+        {/* ===== IMAGE PREVIEW MODAL ===== */}
+        <Modal
+          visible={showPreviewModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowPreviewModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.previewBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowPreviewModal(false)}
+          >
+            <SafeAreaView style={styles.previewContainer}>
+              <View style={styles.previewHeader}>
+                <TouchableOpacity 
+                  onPress={() => setShowPreviewModal(false)}
+                  style={styles.previewCloseBtn}
+                >
+                  <Text style={styles.previewCloseIcon}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              {previewImage && (
+                <Image
+                  source={{ uri: previewImage }}
+                  style={styles.fullImage}
+                  resizeMode="contain"
+                />
+              )}
+            </SafeAreaView>
+          </TouchableOpacity>
+        </Modal>
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
@@ -1367,6 +1610,49 @@ const styles = StyleSheet.create({
   sentRow: {
     justifyContent: 'flex-end',
   },
+  imageContainer: {
+    marginTop: 4,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+  },
+  bubbleImage: {
+    backgroundColor: COLORS.gray100,
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewContainer: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewHeader: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 10,
+  },
+  previewCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewCloseIcon: {
+    color: COLORS.white,
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  fullImage: {
+    width: '100%',
+    height: '100%',
+  },
   smallAvatar: {
     borderRadius: 16,
     backgroundColor: COLORS.avatar.blue,
@@ -1399,8 +1685,40 @@ const styles = StyleSheet.create({
   sentBubble: {
     backgroundColor: COLORS.primary,
   },
+  imageBubble: {
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
   receivedBubble: {
     backgroundColor: COLORS.slate100,
+  },
+  fileContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: SPACING.sm,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: RADIUS.md,
+    minWidth: 180,
+  },
+  fileIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.sm,
+  },
+  fileInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  fileName: {
+    fontWeight: '700',
+  },
+  fileSize: {
+    fontWeight: '500',
   },
   bubbleSelected: {
     opacity: 0.7,
