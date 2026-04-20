@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MSG_PREFIX = 'losky_msg_';
 const CHAT_LIST_KEY = 'losky_chat_list';
+const SETTINGS_PREFIX = 'losky_settings_';
 
 class MessageStorage {
   /**
@@ -28,6 +29,11 @@ class MessageStorage {
       // Prevent duplicates by ID
       if (messages.some(m => m.id === message.id)) {
         return;
+      }
+      
+      // Add createdAt if missing for auto-delete accuracy
+      if (!message.createdAt) {
+        message.createdAt = Date.now();
       }
       
       messages.push(message);
@@ -56,10 +62,42 @@ class MessageStorage {
       if (!roomId) return [];
       const key = `${MSG_PREFIX}${roomId}`;
       const stored = await AsyncStorage.getItem(key);
-      return stored ? JSON.parse(stored) : [];
+      if (!stored) return [];
+
+      let messages = JSON.parse(stored);
+      
+      return messages;
     } catch (error) {
       console.error('[MessageStorage] Error getting messages:', error);
       return [];
+    }
+  }
+
+  /**
+   * Save settings for a specific chat room
+   */
+  async saveChatSettings(roomId, settings) {
+    try {
+      if (!roomId) return;
+      const key = `${SETTINGS_PREFIX}${roomId}`;
+      await AsyncStorage.setItem(key, JSON.stringify(settings));
+    } catch (error) {
+      console.error('[MessageStorage] Error saving chat settings:', error);
+    }
+  }
+
+  /**
+   * Get settings for a specific chat room
+   */
+  async getChatSettings(roomId) {
+    try {
+      if (!roomId) return null;
+      const key = `${SETTINGS_PREFIX}${roomId}`;
+      const stored = await AsyncStorage.getItem(key);
+      return stored ? JSON.parse(stored) : null;
+    } catch (error) {
+      console.error('[MessageStorage] Error getting chat settings:', error);
+      return null;
     }
   }
 
@@ -120,20 +158,120 @@ class MessageStorage {
   }
 
   /**
-   * Clear history for a room
+   * Remove all messages in a room older than a certain duration
+   * @param {string} roomId 
+   * @param {number} durationMs 
    */
-  async deleteRoomMessages(roomId) {
+
+
+  /**
+   * Clear history for a room (Immediate Wipe)
+   */
+
+
+  /**
+   * Delete a specific message from storage
+   */
+  async deleteMessage(roomId, messageId) {
     try {
-      await AsyncStorage.removeItem(`${MSG_PREFIX}${roomId}`);
-      // Remove from list
-      const stored = await AsyncStorage.getItem(CHAT_LIST_KEY);
-      if (stored) {
-        let chatList = JSON.parse(stored);
-        chatList = chatList.filter(c => c.roomId !== roomId);
-        await AsyncStorage.setItem(CHAT_LIST_KEY, JSON.stringify(chatList));
+      if (!roomId || !messageId) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      if (!existingStr) return;
+      
+      let messages = JSON.parse(existingStr);
+      const initialLength = messages.length;
+      messages = messages.filter(m => m.id !== messageId);
+      
+      if (messages.length !== initialLength) {
+        await AsyncStorage.setItem(key, JSON.stringify(messages));
+        
+        // If the deleted message was the last one, update the chat summary
+        if (messages.length > 0) {
+           await this._updateChatListSummary(roomId, messages[messages.length - 1]);
+        } else {
+           // Provide a blank / reset summary if all messages are deleted
+           await this._updateChatListSummary(roomId, { message: "No messages", timestamp: new Date().toISOString() });
+        }
+        console.log(`[MessageStorage] Deleted message ${messageId} from room ${roomId}`);
       }
     } catch (error) {
-      console.error('[MessageStorage] Error deleting room messages:', error);
+      console.error('[MessageStorage] Error deleting message:', error);
+    }
+  }
+  /**
+   * Update reactions for a specific message
+   */
+  async updateMessageReactions(roomId, messageId, emoji, action) {
+    try {
+      if (!roomId || !messageId || !emoji) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      if (!existingStr) return;
+      
+      let messages = JSON.parse(existingStr);
+      let updated = false;
+
+      messages = messages.map(m => {
+        if (m.id === messageId) {
+          updated = true;
+          let reactions = m.reactions || [];
+          if (action === 'add' && !reactions.includes(emoji)) {
+            reactions.push(emoji);
+          } else if (action === 'remove' && reactions.includes(emoji)) {
+            reactions = reactions.filter(r => r !== emoji);
+          }
+          return { ...m, reactions };
+        }
+        return m;
+      });
+      
+      if (updated) {
+        await AsyncStorage.setItem(key, JSON.stringify(messages));
+      }
+    } catch (error) {
+      console.error('[MessageStorage] Error updating reactions:', error);
+    }
+  }
+
+  /**
+   * Mark a message as opened and remove its sensitive content
+   */
+  async markMessageAsOpened(roomId, messageId) {
+    try {
+      if (!roomId || !messageId) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      if (!existingStr) return;
+      
+      let messages = JSON.parse(existingStr);
+      let updated = false;
+
+      messages = messages.map(m => {
+        if (m.id === messageId) {
+          updated = true;
+          // Clean up sensitive content but preserve metadata
+          const cleanedMessage = { ...m };
+          if (cleanedMessage.message && typeof cleanedMessage.message === 'object') {
+            cleanedMessage.message = {
+              ...cleanedMessage.message,
+              uri: null,
+              base64: null,
+              isOpened: true,
+            };
+          }
+          cleanedMessage.isOpened = true;
+          return cleanedMessage;
+        }
+        return m;
+      });
+      
+      if (updated) {
+        await AsyncStorage.setItem(key, JSON.stringify(messages));
+        console.log(`[MessageStorage] Message ${messageId} marked as opened in room ${roomId}`);
+      }
+    } catch (error) {
+      console.error('[MessageStorage] Error marking message as opened:', error);
     }
   }
 }

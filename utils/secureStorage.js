@@ -25,6 +25,8 @@ export const STORAGE_KEYS = {
   CREATED:       'losky_cid_created',      // ISO 8601 timestamp
   FAIL_COUNT:    'losky_fail_count',       // Integer string 0-3
   CONTACTS:      'losky_contacts',         // JSON array of saved contacts
+  BIOMETRIC_ENABLED: 'losky_biometric_enabled', // Boolean string
+  BIOMETRIC_SECRET:  'losky_biometric_secret',  // Sensitive (Master Password)
 };
 
 // ── Bundle Operations ──────────────────────────────────────────────
@@ -147,6 +149,66 @@ export const nukeAllData = async () => {
       console.warn(`[NUKE] Failed to delete key ${Object.values(STORAGE_KEYS)[i]}:`, r.reason);
     }
   });
+};
+
+// ── Biometric Persistence ──────────────────────────────────────────
+
+/**
+ * Check if biometric unlock is enabled in settings.
+ *
+ * @returns {Promise<boolean>}
+ */
+export const isBiometricEnabled = async () => {
+  const val = await AsyncStorage.getItem(STORAGE_KEYS.BIOMETRIC_ENABLED);
+  return val === 'true';
+};
+
+/**
+ * Enable or disable biometric unlock in settings.
+ *
+ * @param {boolean} enabled
+ * @returns {Promise<void>}
+ */
+export const setBiometricEnabled = async (enabled) => {
+  await AsyncStorage.setItem(STORAGE_KEYS.BIOMETRIC_ENABLED, String(enabled));
+};
+
+/**
+ * Securely store the master password for biometric unlock.
+ * Uses SecureStore with `requireAuthentication: true`.
+ *
+ * @param {string} password
+ * @returns {Promise<void>}
+ */
+export const saveBiometricSecret = async (password) => {
+  await SecureStore.setItemAsync(STORAGE_KEYS.BIOMETRIC_SECRET, password, {
+    requireAuthentication: true,
+  });
+};
+
+/**
+ * Retrieve the master password for biometric unlock.
+ * Triggers system biometric prompt.
+ *
+ * @returns {Promise<string|null>}
+ */
+export const getBiometricSecret = async () => {
+  try {
+    return await SecureStore.getItemAsync(STORAGE_KEYS.BIOMETRIC_SECRET, {
+      requireAuthentication: true,
+    });
+  } catch (error) {
+    console.warn('[secureStorage] Biometric auth failed or canceled:', error.message);
+    return null;
+  }
+};
+
+/**
+ * Remove the master password from biometric storage.
+ * @returns {Promise<void>}
+ */
+export const deleteBiometricSecret = async () => {
+  await SecureStore.deleteItemAsync(STORAGE_KEYS.BIOMETRIC_SECRET);
 };
 
 // ── Contact Persistence (AsyncStorage) ──────────────────────────────

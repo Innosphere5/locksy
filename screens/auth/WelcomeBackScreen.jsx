@@ -1,5 +1,5 @@
 // screens/auth/WelcomeBackScreen.jsx
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,10 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
+import * as LocalAuthentication from "expo-local-authentication";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useCIDContext } from "../../context/CIDContext";
+import { isBiometricEnabled, getBiometricSecret } from "../../utils/secureStorage";
 
 /**
  * WelcomeBackScreen — CID Architecture Implementation
@@ -40,6 +43,65 @@ export default function WelcomeBackScreen({ navigation }) {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [shake] = useState(new Animated.Value(0));
+  const [isBiometricSupported, setIsBiometricSupported] = useState(false);
+  const [biometricType, setBiometricType] = useState(null);
+
+  // ── Biometric Integration ───────────────────────────────────────
+  useEffect(() => {
+    const initBiometrics = async () => {
+      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      
+      if (compatible && enrolled) {
+        setIsBiometricSupported(true);
+        const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+        if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+          setBiometricType("face");
+        } else {
+          setBiometricType("fingerprint");
+        }
+
+        // Auto-trigger if enabled
+        const enabled = await isBiometricEnabled();
+        if (enabled) {
+          console.log("[WelcomeBack] Biometrics enabled, triggering...");
+          // Small delay to let screen render
+          setTimeout(handleBiometricAuth, 500);
+        }
+      }
+    };
+    initBiometrics();
+  }, []);
+
+  const handleBiometricAuth = async () => {
+    setIsLoading(true);
+    setErrorMessage("");
+    
+    try {
+      // getBiometricSecret triggers the system biometric prompt
+      const secret = await getBiometricSecret();
+      
+      if (secret) {
+        console.log("[WelcomeBack] Biometric secret retrieved, unlocking...");
+        const result = await verifyAndUnlock(secret);
+        
+        if (result === "success") {
+          console.log("[WelcomeBack] Biometric unlock successful");
+          navigation.replace("Chats");
+        } else {
+          setErrorMessage("❌ Biometric verification failed.");
+          triggerShake();
+        }
+      } else {
+        console.log("[WelcomeBack] Biometric authentication canceled or failed");
+      }
+    } catch (error) {
+      console.error("[WelcomeBack] Biometric error:", error);
+      setErrorMessage("❌ Biometric error. Use password.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const remainingAttempts = Math.max(0, 3 - failCount);
 
@@ -196,6 +258,20 @@ export default function WelcomeBackScreen({ navigation }) {
                   {showPassword ? "🙈" : "👁️"}
                 </Text>
               </TouchableOpacity>
+              
+              {isBiometricSupported && (
+                <TouchableOpacity
+                  onPress={handleBiometricAuth}
+                  style={styles.biometricBtn}
+                  disabled={isLoading}
+                >
+                  <MaterialCommunityIcons 
+                    name={biometricType === "face" ? "face-recognition" : "fingerprint"} 
+                    size={24} 
+                    color="#3B82F6" 
+                  />
+                </TouchableOpacity>
+              )}
             </View>
           </Animated.View>
 
@@ -321,6 +397,13 @@ const styles = StyleSheet.create({
   },
   eyeBtn: { padding: 4 },
   eyeEmoji: { fontSize: 18 },
+  biometricBtn: {
+    padding: 4,
+    marginLeft: 4,
+    borderLeftWidth: 1,
+    borderLeftColor: "#E2E8F0",
+    paddingLeft: 12,
+  },
   loginBtn: {
     width: "100%",
     backgroundColor: "#3B82F6",

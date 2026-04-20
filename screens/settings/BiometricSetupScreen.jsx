@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,34 +9,128 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Modal,
+  TextInput,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
+import { 
+  isBiometricEnabled, 
+  setBiometricEnabled, 
+  saveBiometricSecret, 
+  deleteBiometricSecret 
+} from '../../utils/secureStorage';
+import { useCIDContext } from '../../context/CIDContext';
 
 /**
  * BiometricSetupScreen - Screen 58
- * Setup fingerprint and face recognition
+ * Fully implemented biometric setup with FaceID/Fingerprint integration
  */
 export default function BiometricSetupScreen({ navigation }) {
-  const [fingerprint, setFingerprint] = useState(true);
-  const [faceId, setFaceId] = useState(false);
-  const [passwordOnly, setPasswordOnly] = useState(false);
+  const { verifyAndUnlock } = useCIDContext();
+  
+  const [isEnabled, setIsEnabled] = useState(false);
+  const [isSupported, setIsSupported] = useState(false);
+  const [enrolled, setEnrolled] = useState(false);
+  const [authType, setAuthType] = useState('Biometrics');
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Verification Modal State
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [password, setPassword] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
 
-  const handleSetupBiometric = (type) => {
-    if (type === 'fingerprint') {
-      Alert.alert(
-        'Fingerprint Setup',
-        'Place your registered finger on the sensor',
-        [{ text: 'OK', onPress: () => setFingerprint(true) }]
-      );
-    } else if (type === 'face') {
-      Alert.alert(
-        'Face ID Setup',
-        'Position your face in the frame',
-        [{ text: 'OK', onPress: () => setFaceId(true) }]
-      );
+  useEffect(() => {
+    checkDeviceSupport();
+    loadCurrentSetting();
+  }, []);
+
+  const checkDeviceSupport = async () => {
+    try {
+      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+      
+      setIsSupported(compatible);
+      setEnrolled(enrolled);
+
+      if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+        setAuthType('Face ID');
+      } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
+        setAuthType('Fingerprint');
+      } else {
+        setAuthType('Biometrics');
+      }
+    } catch (e) {
+      console.error('[BiometricSetup] Error checking support:', e);
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  const loadCurrentSetting = async () => {
+    const enabled = await isBiometricEnabled();
+    setIsEnabled(enabled);
+  };
+
+  const handleToggle = async (value) => {
+    if (value) {
+      // Enabling - Need password verification
+      if (!isSupported) {
+        Alert.alert('Not Supported', 'Your device does not support biometric authentication.');
+        return;
+      }
+      if (!enrolled) {
+        Alert.alert('Not Enrolled', 'Please set up Face ID or Fingerprint in your device settings first.');
+        return;
+      }
+      setShowVerifyModal(true);
+    } else {
+      // Disabling - Simple toggle
+      await setBiometricEnabled(false);
+      await deleteBiometricSecret();
+      setIsEnabled(false);
+    }
+  };
+
+  const handleVerifyPassword = async () => {
+    if (!password) return;
+    
+    setIsVerifying(true);
+    try {
+      // verifyAndUnlock returns 'success', 'wrong_password', or 'nuke'
+      const result = await verifyAndUnlock(password);
+      
+      if (result === 'success') {
+        // Correct password - Save for future biometric use
+        await saveBiometricSecret(password);
+        await setBiometricEnabled(true);
+        setIsEnabled(true);
+        setShowVerifyModal(false);
+        setPassword('');
+        Alert.alert('Success', `${authType} has been enabled.`);
+      } else {
+        Alert.alert('Error', 'Incorrect master password. Please try again.');
+      }
+    } catch (e) {
+      console.error('[BiometricSetup] Auth error:', e);
+      Alert.alert('Error', 'An unexpected error occurred during verification.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.center]}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -57,115 +151,121 @@ export default function BiometricSetupScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.description}>
-          Password remains the master key. Biometrics unlock app with fingerprint.
+          Use your device's biometric authentication to unlock Locksy quickly. Your master password remains the primary key.
         </Text>
 
-        {/* Fingerprint Section */}
+        {/* Status Info */}
+        {!isSupported && (
+          <View style={styles.warningCard}>
+            <MaterialCommunityIcons name="alert-circle" size={24} color={COLORS.error} />
+            <Text style={styles.warningText}>
+              Biometric hardware not detected on this device.
+            </Text>
+          </View>
+        )}
+
+        {isSupported && !enrolled && (
+          <View style={styles.warningCard}>
+            <MaterialCommunityIcons name="information" size={24} color={COLORS.warning} />
+            <Text style={[styles.warningText, { color: COLORS.warning }]}>
+              No biometrics enrolled. Please set them up in your OS settings.
+            </Text>
+          </View>
+        )}
+
+        {/* Main Selection */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Fingerprint</Text>
-            <Switch
-              value={fingerprint}
-              onValueChange={setFingerprint}
-              trackColor={{ false: COLORS.gray200, true: COLORS.success + '40' }}
-              thumbColor={fingerprint ? COLORS.success : COLORS.gray300}
-            />
+            <Text style={styles.sectionTitle}>Security Settings</Text>
           </View>
 
           <View style={styles.card}>
-            <View style={styles.iconBig}>
-              <MaterialCommunityIcons 
-                name="fingerprint" 
-                size={64} 
-                color={COLORS.success} 
+            <View style={styles.row}>
+              <View style={styles.rowInfo}>
+                <MaterialCommunityIcons 
+                  name={authType === 'Face ID' ? 'face-recognition' : 'fingerprint'} 
+                  size={32} 
+                  color={isEnabled ? COLORS.primary : COLORS.textMuted} 
+                />
+                <View style={styles.textContainer}>
+                  <Text style={styles.cardTitle}>{authType} Unlock</Text>
+                  <Text style={styles.cardDescription}>
+                    Unlock the app with {authType.toLowerCase()}
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={isEnabled}
+                onValueChange={handleToggle}
+                disabled={!isSupported || !enrolled}
+                trackColor={{ false: COLORS.gray200, true: COLORS.primary + '40' }}
+                thumbColor={isEnabled ? COLORS.primary : COLORS.gray300}
               />
             </View>
-            <Text style={styles.cardTitle}>Enable Fingerprint</Text>
-            <Text style={styles.cardDescription}>
-              Unlock app with registered finger on the sensor
-            </Text>
-            {fingerprint && (
-              <TouchableOpacity 
-                style={styles.setupButton}
-                onPress={() => handleSetupBiometric('fingerprint')}
-              >
-                <Text style={styles.setupButtonText}>Touch fingerprint sensor</Text>
-              </TouchableOpacity>
-            )}
           </View>
         </View>
 
-        {/* Face ID Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Face ID</Text>
-            <Switch
-              value={faceId}
-              onValueChange={setFaceId}
-              trackColor={{ false: COLORS.gray200, true: COLORS.primary + '40' }}
-              thumbColor={faceId ? COLORS.primary : COLORS.gray300}
-            />
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.iconBig}>
-              <MaterialCommunityIcons 
-                name="face-recognition" 
-                size={64} 
-                color={COLORS.primary} 
-              />
-            </View>
-            <Text style={styles.cardTitle}>Enable Face ID</Text>
-            <Text style={styles.cardDescription}>
-              Unlock app with your registered face
-            </Text>
-            {faceId && (
-              <TouchableOpacity 
-                style={styles.setupButton}
-                onPress={() => handleSetupBiometric('face')}
-              >
-                <Text style={styles.setupButtonText}>Use password instead</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-
-        {/* Password Only Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Password Only</Text>
-            <Switch
-              value={passwordOnly}
-              onValueChange={setPasswordOnly}
-              trackColor={{ false: COLORS.gray200, true: COLORS.warning + '40' }}
-              thumbColor={passwordOnly ? COLORS.warning : COLORS.gray300}
-            />
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.iconBig}>
-              <MaterialCommunityIcons 
-                name="lock" 
-                size={64} 
-                color={COLORS.warning} 
-              />
-            </View>
-            <Text style={styles.cardTitle}>Disable biometrics</Text>
-            <Text style={styles.cardDescription}>
-              Unlock app only with password
-            </Text>
-            {passwordOnly && (
-              <TouchableOpacity 
-                style={styles.warnButton}
-                onPress={() => Alert.alert('Warning', 'Password only is less secure')}
-              >
-                <MaterialCommunityIcons name="alert" size={16} color={COLORS.warning} />
-                <Text style={styles.warnButtonText}>Password Only</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+        <View style={styles.noteBox}>
+          <MaterialCommunityIcons name="shield-check" size={20} color={COLORS.success} />
+          <Text style={styles.noteText}>
+            Locksy uses hardware-backed secure storage. Your password is only accessible after your biometric scan.
+          </Text>
         </View>
       </ScrollView>
+
+      {/* Password Verification Modal */}
+      <Modal
+        visible={showVerifyModal}
+        transparent={true}
+        animationType="fade"
+      >
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Confirm Password</Text>
+            <Text style={styles.modalSubtitle}>
+              Enter your master password to enable {authType}
+            </Text>
+
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={styles.input}
+                placeholder="Master password"
+                placeholderTextColor={COLORS.placeholder}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoFocus
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.cancelBtn}
+                onPress={() => {
+                  setShowVerifyModal(false);
+                  setPassword('');
+                }}
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.confirmBtn, !password && styles.disabledBtn]}
+                onPress={handleVerifyPassword}
+                disabled={!password || isVerifying}
+              >
+                {isVerifying ? (
+                  <ActivityIndicator size="small" color={COLORS.white} />
+                ) : (
+                  <Text style={styles.confirmBtnText}>Verify</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -174,6 +274,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  center: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     flexDirection: 'row',
@@ -210,74 +314,146 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xl,
     lineHeight: 22,
   },
+  warningCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.error + '10',
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACING.lg,
+    gap: SPACING.sm,
+  },
+  warningText: {
+    ...TYPOGRAPHY.body3,
+    color: COLORS.error,
+    flex: 1,
+  },
   section: {
-    marginBottom: SPACING.xxl,
+    marginBottom: SPACING.xl,
   },
   sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: SPACING.md,
+    marginBottom: SPACING.sm,
   },
   sectionTitle: {
-    ...TYPOGRAPHY.h5,
-    color: COLORS.text,
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   card: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
-    alignItems: 'center',
     ...SHADOWS.sm,
   },
-  iconBig: {
-    width: 100,
-    height: 100,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.gray50,
-    justifyContent: 'center',
+  row: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: SPACING.lg,
+    justifyContent: 'space-between',
+  },
+  rowInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: SPACING.md,
+  },
+  textContainer: {
+    flex: 1,
   },
   cardTitle: {
-    ...TYPOGRAPHY.h5,
+    ...TYPOGRAPHY.body1,
     color: COLORS.text,
-    marginBottom: SPACING.sm,
-    textAlign: 'center',
+    fontWeight: '600',
   },
   cardDescription: {
-    ...TYPOGRAPHY.body2,
+    ...TYPOGRAPHY.body3,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  noteBox: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.success + '05',
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.success + '20',
+    gap: SPACING.sm,
+    marginTop: SPACING.md,
+  },
+  noteText: {
+    ...TYPOGRAPHY.body3,
+    color: COLORS.success,
+    flex: 1,
+    lineHeight: 18,
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: SPACING.xl,
+  },
+  modalContent: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.xl,
+    ...SHADOWS.lg,
+  },
+  modalTitle: {
+    ...TYPOGRAPHY.h4,
+    color: COLORS.text,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    ...TYPOGRAPHY.body3,
     color: COLORS.textMuted,
     textAlign: 'center',
-    marginBottom: SPACING.lg,
-    lineHeight: 20,
+    marginTop: SPACING.xs,
+    marginBottom: SPACING.xl,
   },
-  setupButton: {
-    width: '100%',
+  inputWrapper: {
+    backgroundColor: COLORS.gray50,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: SPACING.xl,
+  },
+  input: {
+    paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.md,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
+    ...TYPOGRAPHY.body1,
+    color: COLORS.text,
   },
-  setupButtonText: {
+  modalActions: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cancelBtnText: {
+    ...TYPOGRAPHY.body1,
+    color: COLORS.text,
+    fontWeight: '600',
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.primary,
+  },
+  confirmBtnText: {
     ...TYPOGRAPHY.body1,
     color: COLORS.white,
     fontWeight: '600',
   },
-  warnButton: {
-    width: '100%',
-    paddingVertical: SPACING.md,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.warningLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: SPACING.sm,
-  },
-  warnButtonText: {
-    ...TYPOGRAPHY.body1,
-    color: COLORS.warning,
-    fontWeight: '600',
+  disabledBtn: {
+    opacity: 0.5,
   },
 });

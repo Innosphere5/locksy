@@ -91,6 +91,8 @@ class SocketService {
 
     // Remove existing if any (multiplexing fix)
     this.socket.removeAllListeners("message:received");
+    this.socket.removeAllListeners("message:deleted");
+    this.socket.removeAllListeners("message:reaction:updated");
     this.socket.removeAllListeners("contact:request");
     this.socket.removeAllListeners("contact:accepted");
     this.socket.removeAllListeners("user:status");
@@ -104,6 +106,39 @@ class SocketService {
       
       // Dispatch to UI listeners
       this._dispatch("message:received", message);
+    });
+
+    // Message Deleted Listener
+    this.socket.on("message:deleted", async (data) => {
+      console.log("[SocketService] Global message:deleted triggered", data.messageId);
+      
+      // REMOVE FROM LOCAL STORAGE IMMEDIATELY
+      await messageStorage.deleteMessage(data.roomId, data.messageId);
+      
+      // Dispatch to UI listeners
+      this._dispatch("message:deleted", data);
+    });
+
+    // Message Reaction Listener
+    this.socket.on("message:reaction:updated", async (data) => {
+      console.log("[SocketService] Global message:reaction:updated triggered", data.messageId);
+      
+      // PERSIST REACTION LOCALLY
+      await messageStorage.updateMessageReactions(data.roomId, data.messageId, data.emoji, data.action);
+      
+      // Dispatch to UI listeners
+      this._dispatch("message:reaction:updated", data);
+    });
+
+    // Message Opened Listener (View Once)
+    this.socket.on("message:opened", async (data) => {
+      console.log("[SocketService] Global message:opened triggered", data.messageId);
+      
+      // PERSIST STATE LOCALLY (Scrubs media data)
+      await messageStorage.markMessageAsOpened(data.roomId, data.messageId);
+      
+      // Dispatch to UI listeners
+      this._dispatch("message:opened", data);
     });
 
     // Connection Request Listener
@@ -174,6 +209,27 @@ class SocketService {
    */
   onMessageReceived(callback) {
     return this.on("message:received", callback);
+  }
+
+  /**
+   * Convenience: Register listener for deleted messages
+   */
+  onMessageDeleted(callback) {
+    return this.on("message:deleted", callback);
+  }
+
+  /**
+   * Convenience: Register listener for updated message reactions
+   */
+  onMessageReactionUpdated(callback) {
+    return this.on("message:reaction:updated", callback);
+  }
+
+  /**
+   * Convenience: Register listener for opened view-once messages
+   */
+  onMessageOpened(callback) {
+    return this.on("message:opened", callback);
   }
 
   /**
@@ -306,6 +362,30 @@ class SocketService {
       senderCid: this.userCid,
       senderNickname,
     });
+  }
+
+  /**
+   * Delete message
+   */
+  deleteMessage(roomId, messageId) {
+    if (!this.socket) return;
+    this.socket.emit("message:delete", { roomId, messageId });
+  }
+
+  /**
+   * Toggle Reaction on a message
+   */
+  toggleReaction(roomId, messageId, emoji, action) {
+    if (!this.socket) return;
+    this.socket.emit("message:react", { roomId, messageId, emoji, action });
+  }
+
+  /**
+   * Notify that a view-once message was opened
+   */
+  messageOpened(roomId, messageId) {
+    if (!this.socket) return;
+    this.socket.emit("message:opened", { roomId, messageId });
   }
 
   /**

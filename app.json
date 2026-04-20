@@ -38,7 +38,8 @@
         {
           "photosPermission": "Allow Locksy to access your photos to scan QR codes from the gallery."
         }
-      ]
+      ],
+      "expo-audio"
     ]
   }
 }

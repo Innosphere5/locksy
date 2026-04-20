@@ -17,6 +17,7 @@ export default function AttachMediaModal({
   onSelectMedia,
 }) {
   const [selectedMedia, setSelectedMedia] = useState(null);
+  const [isViewOnce, setIsViewOnce] = useState(false);
 
   const mediaOptions = [
     { 
@@ -46,24 +47,16 @@ export default function AttachMediaModal({
     { 
       id: 'file', 
       icon: '📄', 
-      label: 'FILE',
-      type: 'file',
+      label: 'FILE', 
+      type: 'file', 
       color: COLORS.avatar.cyan,
       description: 'Document or file'
     },
     { 
-      id: 'once', 
-      icon: '👁️', 
-      label: 'ONCE',
-      type: 'once',
-      color: COLORS.primaryLight,
-      description: 'View once photo'
-    },
-    { 
       id: 'timer', 
       icon: '⏱️', 
-      label: 'TIMER',
-      type: 'timer',
+      label: 'TIMER', 
+      type: 'timer', 
       color: COLORS.warningLight,
       description: 'Auto-delete timer'
     },
@@ -76,11 +69,14 @@ export default function AttachMediaModal({
         type: option.type,
         id: option.id,
         label: option.label,
+        isViewOnce: (option.type === 'photo' || option.type === 'video' || option.type === 'file' || option.type === 'voice') ? isViewOnce : false,
       });
     }
     // Auto-close after selection
     setTimeout(() => {
       onClose();
+      // Reset toggle for next time
+      setIsViewOnce(false);
     }, 300);
   };
 
@@ -131,6 +127,30 @@ export default function AttachMediaModal({
             <Text style={styles.titleIcon}>📎</Text>
             <Text style={styles.titleText}>Send Encrypted</Text>
             <Text style={styles.titleDesc}>AES-256 before sending · All types</Text>
+          </View>
+
+          {/* View Once Toggle Section */}
+          <View style={styles.toggleContainer}>
+            <View style={styles.toggleInfo}>
+              <Text style={styles.toggleIcon}>👁️</Text>
+              <View>
+                <Text style={styles.toggleTitle}>View Once Mode</Text>
+                <Text style={styles.toggleSubtitle}>Media disappears after opening</Text>
+              </View>
+            </View>
+            <TouchableOpacity 
+              style={[
+                styles.toggleSwitch, 
+                isViewOnce && styles.toggleSwitchActive
+              ]}
+              onPress={() => setIsViewOnce(!isViewOnce)}
+              activeOpacity={0.8}
+            >
+              <View style={[
+                styles.toggleKnob,
+                isViewOnce && styles.toggleKnobActive
+              ]} />
+            </TouchableOpacity>
           </View>
 
           {/* Media Grid */}
@@ -274,5 +294,53 @@ const styles = StyleSheet.create({
     color: COLORS.encryptionText,
     fontWeight: '500',
     lineHeight: 16,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.gray100,
+    padding: SPACING.md,
+    borderRadius: RADIUS.lg,
+    marginBottom: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.gray200,
+  },
+  toggleInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  toggleIcon: {
+    fontSize: 24,
+  },
+  toggleTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.dark,
+  },
+  toggleSubtitle: {
+    fontSize: 11,
+    color: COLORS.gray500,
+    fontWeight: '500',
+  },
+  toggleSwitch: {
+    width: 48,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: COLORS.gray300,
+    padding: 2,
+  },
+  toggleSwitchActive: {
+    backgroundColor: COLORS.primary,
+  },
+  toggleKnob: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: COLORS.white,
+  },
+  toggleKnobActive: {
+    transform: [{ translateX: 22 }],
   },
 });

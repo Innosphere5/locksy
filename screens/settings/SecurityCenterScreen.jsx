@@ -136,21 +136,7 @@ export default function SecurityCenterScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
-          {/* Message Timers */}
-          <View style={styles.settingItem}>
-            <View style={styles.settingContent}>
-              <View style={[styles.settingIcon, { backgroundColor: COLORS.warning + '18' }]}>
-                <MaterialCommunityIcons name="timer" size={20} color={COLORS.warning} />
-              </View>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingLabel}>Message Timers</Text>
-                <Text style={styles.settingDescription}>Auto-delete messages</Text>
-              </View>
-            </View>
-            <View style={styles.statusBadge}>
-              <Text style={styles.statusTextManual}>MANUAL</Text>
-            </View>
-          </View>
+
 
           {/* Wipe on 3 Fails */}
           <View style={styles.settingItem}>
