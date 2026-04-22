@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
+import { useSecurity } from '../../context/SecurityContext';
 
 const { width: screenWidth } = Dimensions.get('screen');
 
@@ -23,7 +24,12 @@ const { width: screenWidth } = Dimensions.get('screen');
 export default function SecurityCenterScreen({ navigation }) {
   const [encryptionEnabled, setEncryptionEnabled] = useState(true);
   const [stealthMode, setStealthMode] = useState(true);
-  const [screenshotBlock, setScreenshotBlock] = useState(true);
+  const { 
+    screenshotBlockEnabled, 
+    toggleScreenshotBlock, 
+    screenRecordingBlockEnabled, 
+    toggleScreenRecordingBlock 
+  } = useSecurity();
   const [autoLock, setAutoLock] = useState(true);
   const [wipeOnFail, setWipeOnFail] = useState(true);
 
@@ -115,9 +121,31 @@ export default function SecurityCenterScreen({ navigation }) {
                 <Text style={styles.settingDescription}>Prevent screen capture</Text>
               </View>
             </View>
-            <View style={styles.statusBadge}>
-              <Text style={styles.statusTextActive}>ACTIVE</Text>
+            <Switch
+              value={screenshotBlockEnabled}
+              onValueChange={toggleScreenshotBlock}
+              trackColor={{ false: COLORS.gray200, true: COLORS.warning + '40' }}
+              thumbColor={screenshotBlockEnabled ? COLORS.warning : COLORS.gray300}
+            />
+          </View>
+
+          {/* Screen Recording Block */}
+          <View style={styles.settingItem}>
+            <View style={styles.settingContent}>
+              <View style={[styles.settingIcon, { backgroundColor: COLORS.danger + '18' }]}>
+                <MaterialCommunityIcons name="record-rec" size={20} color={COLORS.danger} />
+              </View>
+              <View style={styles.settingInfo}>
+                <Text style={styles.settingLabel}>Screen Recording Block</Text>
+                <Text style={styles.settingDescription}>Prevent screen recording</Text>
+              </View>
             </View>
+            <Switch
+              value={screenRecordingBlockEnabled}
+              onValueChange={toggleScreenRecordingBlock}
+              trackColor={{ false: COLORS.gray200, true: COLORS.danger + '40' }}
+              thumbColor={screenRecordingBlockEnabled ? COLORS.danger : COLORS.gray300}
+            />
           </View>
 
           {/* Auto-Lock */}

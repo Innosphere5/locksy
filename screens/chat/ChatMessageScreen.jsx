@@ -17,6 +17,7 @@ import {
   useWindowDimensions,
   Dimensions,
   Image,
+  Vibration,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -27,11 +28,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme/colors';
 import AttachMediaModal from '../modals/AttachMediaModal';
+import PinPad from '../common/PinPad';
 import { Audio, Video, ResizeMode } from 'expo-av';
 import socketService from '../../utils/socketService';
 import messageStorage from '../../utils/messageStorage';
 import vaultStorage from '../../utils/vaultStorage';
 import { useCIDContext } from '../../context/CIDContext';
+import { setChatLock, clearChatLock, getChatLockStatus } from '../../utils/secureStorage';
 
 // ============================================================================
 // RESPONSIVE UTILITY FUNCTIONS
@@ -759,6 +762,181 @@ function DeleteMessageDialog({ visible, onClose, onDeleteForEveryone, onDeleteFo
 }
 
 // ============================================================================
+// CHAT LOCK MODAL (RESPONSIVE)
+// ============================================================================
+
+function ChatLockModal({ visible, onClose, contactName, contactCid, currentPassword, onSave, screenDimensions }) {
+  const [pin, setPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [step, setStep] = useState(currentPassword ? 'manage' : 'enter'); // manage, enter, confirm, success
+  const { screenWidth } = screenDimensions;
+
+  // Animations
+  const contentFade = useRef(new Animated.Value(1)).current;
+  const shake = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setStep(currentPassword ? 'manage' : 'enter');
+      setPin('');
+      setConfirmPin('');
+      contentFade.setValue(1);
+    }
+  }, [visible, currentPassword]);
+
+  const transitionTo = (nextStep) => {
+    Animated.timing(contentFade, {
+      toValue: 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start(() => {
+      setStep(nextStep);
+      Animated.timing(contentFade, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  const triggerShake = () => {
+    Vibration.vibrate(100);
+    Animated.sequence([
+      Animated.timing(shake, { toValue: 10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: -10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 6, duration: 50, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: -6, duration: 50, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const handleKey = (key) => {
+    if (key === 'del') {
+      if (step === 'enter') setPin(p => p.slice(0, -1));
+      if (step === 'confirm') setConfirmPin(p => p.slice(0, -1));
+      return;
+    }
+
+    if (step === 'enter') {
+      if (pin.length >= 6) return;
+      const next = pin + key;
+      setPin(next);
+      if (next.length === 6) {
+        setTimeout(() => transitionTo('confirm'), 200);
+      }
+    } else if (step === 'confirm') {
+      if (confirmPin.length >= 6) return;
+      const next = confirmPin + key;
+      setConfirmPin(next);
+      if (next.length === 6) {
+        if (next === pin) {
+          // Success
+          onSave(next);
+          setStep('success');
+          setTimeout(() => onClose(), 1500);
+        } else {
+          triggerShake();
+          setConfirmPin('');
+        }
+      }
+    }
+  };
+
+  const isTablet = screenWidth > 768;
+  const modalWidth = isTablet ? 450 : screenWidth * 0.92;
+
+  // PIN Characters boxes
+  const renderPinBoxes = (currentPin) => (
+    <View style={styles.premiumPinRow}>
+      {Array.from({ length: 6 }).map((_, i) => {
+        const filled = i < currentPin.length;
+        return (
+          <View key={i} style={[styles.premiumPinBox, filled && styles.premiumPinBoxFilled]}>
+            <Text style={[styles.premiumPinText, filled && styles.premiumPinTextFilled]}>
+              {filled ? '●' : ''}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.premiumBackdrop}>
+        <Animated.View style={[
+          styles.premiumModalCard, 
+          { width: modalWidth, transform: [{ translateX: shake }, { translateY: 0 }] }
+        ]}>
+          <View style={styles.premiumModalHeader}>
+            <View style={[styles.headerIconCircle, currentPassword && { backgroundColor: COLORS.successLight }]}>
+              <Text style={{ fontSize: 24 }}>{currentPassword ? '🛡️' : '🔒'}</Text>
+            </View>
+            <View style={{ flex: 1, marginLeft: 16 }}>
+              <Text style={styles.premiumModalTitle}>
+                {step === 'success' ? 'Password Set!' : (currentPassword && step === 'manage' ? 'Chat Protected' : 'Lock Chat')}
+              </Text>
+              <Text style={styles.premiumModalSubtitle}>
+                {step === 'success' ? 'Your chat is now secure' : 'Private encryption for this contact'}
+              </Text>
+            </View>
+            {step !== 'success' && (
+              <TouchableOpacity onPress={onClose} style={styles.premiumCloseBtn}>
+                <Text style={{ fontSize: 18, color: COLORS.gray400 }}>✕</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Animated.View style={[styles.premiumModalContent, { opacity: contentFade }]}>
+            {step === 'manage' ? (
+              <View style={styles.premiumManageBox}>
+                <View style={styles.securityBadge}>
+                  <Text style={styles.securityBadgeText}>ACTIVE PROTECTION</Text>
+                </View>
+                <Text style={styles.premiumDesc}>
+                  Accessing messages with <Text style={{ fontWeight: '700', color: COLORS.dark }}>{contactName}</Text> requires your private PIN or biometrics.
+                </Text>
+                
+                <View style={styles.premiumActions}>
+                  <TouchableOpacity style={styles.premiumActionBtn} onPress={() => setStep('enter')}>
+                    <Text style={styles.premiumActionText}>Change Password</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.premiumActionBtn, styles.dangerActionBtn]} onPress={() => onSave(null)}>
+                    <Text style={[styles.premiumActionText, styles.dangerText]}>Remove Lock</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : step === 'success' ? (
+              <View style={styles.successState}>
+                <View style={styles.successCircle}>
+                  <Text style={styles.successCheck}>✓</Text>
+                </View>
+                <Text style={styles.successText}>Everything ready</Text>
+              </View>
+            ) : (
+              <View style={styles.premiumPinEntry}>
+                <Text style={styles.stepIndicator}>
+                  {step === 'enter' ? 'STEP 1 OF 2' : 'STEP 2 OF 2'}
+                </Text>
+                <Text style={styles.pinPromt}>
+                  {step === 'enter' ? 'Create your chat PIN' : 'Confirm your chat PIN'}
+                </Text>
+                
+                {renderPinBoxes(step === 'enter' ? pin : confirmPin)}
+
+                <View style={{ marginTop: 20 }}>
+                  <PinPad onKey={handleKey} />
+                </View>
+              </View>
+            )}
+          </Animated.View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+// ============================================================================
 // MAIN CHAT MESSAGE SCREEN COMPONENT (RESPONSIVE)
 // ============================================================================
 
@@ -809,6 +987,12 @@ export default function ChatMessageScreen({ navigation, route }) {
   const [isViewOnceText, setIsViewOnceText] = useState(false);
   const [isPendingVoiceViewOnce, setIsPendingVoiceViewOnce] = useState(false);
 
+  // Chat Lock States
+  const [isLockedOnEntry, setIsLockedOnEntry] = useState(false);
+  const [isUnlockedForSession, setIsUnlockedForSession] = useState(false);
+  const [showLockModal, setShowLockModal] = useState(false);
+  const [currentLockPassword, setCurrentLockPassword] = useState(null);
+
   // Audio Recording States
   const [recording, setRecording] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -853,6 +1037,30 @@ export default function ChatMessageScreen({ navigation, route }) {
         console.warn("[ChatMessage] Sync/Join failed:", err);
       }
     };
+
+    // 1. Check for Chat Lock on entry
+    const checkLockEffect = async () => {
+      if (contactCID && !isUnlockedForSession) {
+        const status = await getChatLockStatus(contactCID);
+        if (status.isLocked) {
+          setIsLockedOnEntry(true);
+          setCurrentLockPassword(status.lockPassword);
+          // Navigate to Unlock screen
+          navigation.navigate('UnlockChat', {
+            contactName,
+            contactCid: contactCID,
+            onUnlockSuccess: () => {
+              setIsLockedOnEntry(false);
+              setIsUnlockedForSession(true);
+              navigation.goBack();
+            }
+          });
+        }
+      }
+    };
+
+    checkLockEffect();
+    initialize();
 
     // 4. Subscribe to new messages using multiplexed listener
     const unsubscribeMsg = socketService.on("message:received", (message) => {
@@ -1750,6 +1958,15 @@ export default function ChatMessageScreen({ navigation, route }) {
               <TouchableOpacity
                 style={styles.headerIconBtn}
                 activeOpacity={0.6}
+                onPress={() => setShowLockModal(true)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={{ fontSize: headerIconFontSize }}>{currentLockPassword ? '🔓' : '🔒'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.headerIconBtn}
+                activeOpacity={0.6}
                 onPress={() => alert('Voice call initiated')}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
@@ -2081,6 +2298,26 @@ export default function ChatMessageScreen({ navigation, route }) {
             </SafeAreaView>
           </View>
         </Modal>
+
+        {/* ===== CHAT LOCK MODAL ===== */}
+        <ChatLockModal
+          visible={showLockModal}
+          onClose={() => setShowLockModal(false)}
+          contactName={contactName}
+          contactCid={contactCID}
+          currentPassword={currentLockPassword}
+          onSave={async (newPassword) => {
+            if (newPassword) {
+              await setChatLock(contactCID, newPassword);
+              setCurrentLockPassword(newPassword);
+            } else {
+              await clearChatLock(contactCID);
+              setCurrentLockPassword(null);
+            }
+            setShowLockModal(false);
+          }}
+          screenDimensions={screenDimensions}
+        />
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
@@ -2859,5 +3096,168 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 10,
+  },
+  // Premium Modal Styles
+  premiumBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 40,
+  },
+  premiumModalCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 32,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.3,
+    shadowRadius: 30,
+    elevation: 20,
+    overflow: 'hidden',
+  },
+  premiumModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  headerIconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    backgroundColor: COLORS.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  premiumModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: COLORS.dark,
+    letterSpacing: -0.5,
+  },
+  premiumModalSubtitle: {
+    fontSize: 13,
+    color: COLORS.gray500,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  premiumCloseBtn: {
+    padding: 8,
+    backgroundColor: COLORS.gray50,
+    borderRadius: 12,
+  },
+  premiumModalContent: {
+    width: '100%',
+  },
+  premiumManageBox: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  securityBadge: {
+    backgroundColor: COLORS.successLight,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 100,
+    marginBottom: 16,
+  },
+  securityBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.success,
+    letterSpacing: 1,
+  },
+  premiumDesc: {
+    fontSize: 15,
+    color: COLORS.gray600,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 28,
+  },
+  premiumActions: {
+    width: '100%',
+    gap: 12,
+  },
+  premiumActionBtn: {
+    width: '100%',
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: COLORS.gray50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  premiumActionText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.dark,
+  },
+  dangerActionBtn: {
+    backgroundColor: '#FFF1F2',
+  },
+  dangerText: {
+    color: COLORS.error,
+  },
+  premiumPinEntry: {
+    alignItems: 'center',
+  },
+  stepIndicator: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.primary,
+    letterSpacing: 2,
+    marginBottom: 12,
+  },
+  pinPromt: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.dark,
+    marginBottom: 24,
+  },
+  premiumPinRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 24,
+  },
+  premiumPinBox: {
+    width: 44,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: COLORS.gray50,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  premiumPinBoxFilled: {
+    backgroundColor: COLORS.primaryLight,
+    borderColor: COLORS.primary,
+  },
+  premiumPinText: {
+    fontSize: 20,
+    color: COLORS.gray300,
+  },
+  premiumPinTextFilled: {
+    color: COLORS.primary,
+  },
+  successState: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  successCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: COLORS.successLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  successCheck: {
+    fontSize: 40,
+    color: COLORS.success,
+  },
+  successText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.dark,
   },
 });

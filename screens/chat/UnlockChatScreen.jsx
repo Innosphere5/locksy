@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,16 +8,54 @@ import {
   Vibration,
   Animated,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
 import PinPad from '../common/PinPad';
+import { getChatLockStatus } from '../../utils/secureStorage';
 
 const PIN_LENGTH = 6;
-const CORRECT_PIN = '112233'; // demo
 
 export default function UnlockChatScreen({ navigation, route }) {
-  const chatName = route?.params?.chatName || 'Chat';
+  const contactName = route?.params?.contactName || 'Chat';
+  const contactCid = route?.params?.contactCid;
+  const onUnlockSuccess = route?.params?.onUnlockSuccess; // Optional callback
+
   const [pin, setPin] = useState('');
+  const [targetPin, setTargetPin] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [shake] = useState(new Animated.Value(0));
+  const [isBiometricSupported, setIsBiometricSupported] = useState(false);
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        // Load target PIN for this contact
+        if (contactCid) {
+          const status = await getChatLockStatus(contactCid);
+          setTargetPin(status.lockPassword);
+        } else {
+          // Fallback/Demo
+          setTargetPin('112233'); 
+        }
+
+        // Check biometrics
+        const compatible = await LocalAuthentication.hasHardwareAsync();
+        const enrolled = await LocalAuthentication.isEnrolledAsync();
+        setIsBiometricSupported(compatible && enrolled);
+
+        if (compatible && enrolled) {
+          // Auto-trigger biometrics
+          handleBiometricAuth();
+        }
+      } catch (err) {
+        console.error('[UnlockChat] Init error:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    init();
+  }, [contactCid]);
 
   const triggerShake = () => {
     Vibration.vibrate(100);
@@ -30,7 +68,32 @@ export default function UnlockChatScreen({ navigation, route }) {
     ]).start();
   };
 
+  const handleUnlock = () => {
+    if (onUnlockSuccess) {
+      onUnlockSuccess();
+    } else {
+      navigation.goBack();
+    }
+  };
+
+  const handleBiometricAuth = async () => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: `Unlock chat with ${contactName}`,
+        fallbackLabel: 'Use PIN',
+      });
+
+      if (result.success) {
+        handleUnlock();
+      }
+    } catch (err) {
+      console.warn('[UnlockChat] Biometric error:', err);
+    }
+  };
+
   const handleKey = (key) => {
+    if (isLoading) return;
+
     if (key === 'del') {
       setPin((p) => p.slice(0, -1));
       return;
@@ -41,16 +104,25 @@ export default function UnlockChatScreen({ navigation, route }) {
 
     if (newPin.length === PIN_LENGTH) {
       setTimeout(() => {
-        if (newPin === CORRECT_PIN) {
-          navigation.goBack();
+        if (newPin === targetPin) {
+          handleUnlock();
         } else {
           triggerShake();
           setPin('');
-          navigation.navigate('WrongPassword');
+          // Maybe navigate to WrongPassword if too many fails, 
+          // but for chat lock let's keep it simple for now.
         }
       }, 150);
     }
   };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.safe, styles.center]}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -63,8 +135,8 @@ export default function UnlockChatScreen({ navigation, route }) {
           </View>
         </View>
 
-        <Text style={styles.title}>Unlock Chat</Text>
-        <Text style={styles.subtitle}>Enter master password to access</Text>
+        <Text style={styles.title}>Unlock {contactName}</Text>
+        <Text style={styles.subtitle}>Enter private password to access</Text>
 
         {/* Dots */}
         <Animated.View
@@ -82,9 +154,15 @@ export default function UnlockChatScreen({ navigation, route }) {
         <PinPad onKey={handleKey} />
 
         {/* Biometrics text link */}
-        <TouchableOpacity style={styles.bioLink} activeOpacity={0.7}>
-          <Text style={styles.bioText}>Use biometrics instead</Text>
-        </TouchableOpacity>
+        {isBiometricSupported && (
+          <TouchableOpacity 
+            style={styles.bioLink} 
+            activeOpacity={0.7}
+            onPress={handleBiometricAuth}
+          >
+            <Text style={styles.bioText}>Use biometrics instead</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -92,6 +170,7 @@ export default function UnlockChatScreen({ navigation, route }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#FFFFFF' },
+  center: { justifyContent: 'center', alignItems: 'center' },
   container: {
     flex: 1,
     alignItems: 'center',
@@ -113,11 +192,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F172A',
     marginBottom: 6,
+    textAlign: 'center',
+    paddingHorizontal: 20,
   },
   subtitle: {
     fontSize: 15,
     color: '#94A3B8',
     marginBottom: 32,
+    textAlign: 'center',
   },
   dotsRow: {
     flexDirection: 'row',
@@ -141,4 +223,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#3B82F6',
   },
-});
+});

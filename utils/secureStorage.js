@@ -27,6 +27,8 @@ export const STORAGE_KEYS = {
   CONTACTS:      'losky_contacts',         // JSON array of saved contacts
   BIOMETRIC_ENABLED: 'losky_biometric_enabled', // Boolean string
   BIOMETRIC_SECRET:  'losky_biometric_secret',  // Sensitive (Master Password)
+  SCREENSHOT_BLOCK:  'losky_screenshot_block',   // Boolean string
+  SCREEN_RECORDING_BLOCK: 'losky_screen_recording_block', // Boolean string
 };
 
 // ── Bundle Operations ──────────────────────────────────────────────
@@ -307,4 +309,100 @@ export const findContact = async (cid) => {
     console.error('[secureStorage] Error finding contact:', error);
     return null;
   }
+};
+
+/**
+ * Set a private password for a specific chat contact.
+ * 
+ * @param {string} cid - Contact ID
+ * @param {string} password - The custom PIN/Password
+ */
+export const setChatLock = async (cid, password) => {
+  try {
+    const contacts = await loadContacts();
+    const updated = contacts.map(c => 
+      c.cid === cid ? { ...c, isLocked: true, lockPassword: password } : c
+    );
+    await saveContacts(updated);
+  } catch (error) {
+    console.error('[secureStorage] Error setting chat lock:', error);
+  }
+};
+
+/**
+ * Remove the lock from a specific chat contact.
+ * 
+ * @param {string} cid - Contact ID
+ */
+export const clearChatLock = async (cid) => {
+  try {
+    const contacts = await loadContacts();
+    const updated = contacts.map(c => 
+      c.cid === cid ? { ...c, isLocked: false, lockPassword: null } : c
+    );
+    await saveContacts(updated);
+  } catch (error) {
+    console.error('[secureStorage] Error clearing chat lock:', error);
+  }
+};
+
+/**
+ * Check if a chat is locked and get its password.
+ * 
+ * @param {string} cid - Contact ID
+ * @returns {Promise<{isLocked: boolean, lockPassword: string|null}>}
+ */
+export const getChatLockStatus = async (cid) => {
+  try {
+    const contact = await findContact(cid);
+    if (!contact) return { isLocked: false, lockPassword: null };
+    return {
+      isLocked: !!contact.isLocked,
+      lockPassword: contact.lockPassword || null
+    };
+  } catch (error) {
+    console.error('[secureStorage] Error checking chat lock status:', error);
+    return { isLocked: false, lockPassword: null };
+  }
+};
+/**
+ * Check if screenshot blocking is enabled in settings.
+ *
+ * @returns {Promise<boolean>}
+ */
+export const isScreenshotBlockEnabled = async () => {
+  const val = await AsyncStorage.getItem(STORAGE_KEYS.SCREENSHOT_BLOCK);
+  // Default to true for privacy app if not set
+  return val === null ? true : val === 'true';
+};
+
+/**
+ * Enable or disable screenshot blocking in settings.
+ *
+ * @param {boolean} enabled
+ * @returns {Promise<void>}
+ */
+export const setScreenshotBlockEnabled = async (enabled) => {
+  await AsyncStorage.setItem(STORAGE_KEYS.SCREENSHOT_BLOCK, String(enabled));
+};
+
+/**
+ * Check if screen recording blocking is enabled in settings.
+ *
+ * @returns {Promise<boolean>}
+ */
+export const isScreenRecordingBlockEnabled = async () => {
+  const val = await AsyncStorage.getItem(STORAGE_KEYS.SCREEN_RECORDING_BLOCK);
+  // Default to true for privacy app if not set
+  return val === null ? true : val === 'true';
+};
+
+/**
+ * Enable or disable screen recording blocking in settings.
+ *
+ * @param {boolean} enabled
+ * @returns {Promise<void>}
+ */
+export const setScreenRecordingBlockEnabled = async (enabled) => {
+  await AsyncStorage.setItem(STORAGE_KEYS.SCREEN_RECORDING_BLOCK, String(enabled));
 };
