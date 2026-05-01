@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,25 +11,62 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  FlatList,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SHADOWS } from '../../theme';
 import { useGroups } from '../../context/GroupsContext';
+import { useCIDContext } from '../../context/CIDContext';
 
 export default function CreateGroupScreen({ navigation }) {
   const { createGroup } = useGroups();
+  const { contacts, searchContactByNickname } = useCIDContext();
   const [groupName, setGroupName] = useState('');
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState('closed'); // 'closed' | 'approval'
   const [isCreating, setIsCreating] = useState(false);
+  const [selectedMembers, setSelectedMembers] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [usernameToAdd, setUsernameToAdd] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
 
-  // Sample members for demo (can be replaced with real members from contacts)
-  const SAMPLE_MEMBERS = [
-    { id: '1', name: 'Shadow_Wolf', nickname: 'Shadow_Wolf', avatar: '🐺' },
-    { id: '2', name: 'Iron_Mask', nickname: 'Iron_Mask', avatar: '🎭' },
-    { id: '3', name: 'CipherX', nickname: 'CipherX', avatar: '🔐' },
-    { id: '4', name: 'NightOwl', nickname: 'NightOwl', avatar: '🦉' },
-  ];
+  const handleAddByUsername = async () => {
+    if (!usernameToAdd.trim()) return;
+    try {
+      setIsSearching(true);
+      const result = await searchContactByNickname(usernameToAdd.trim());
+      if (result && result.otherUser) {
+        const user = result.otherUser;
+        if (selectedMembers.some(m => m.cid === user.cid)) {
+          Alert.alert('Info', 'User already in selection');
+        } else {
+          setSelectedMembers(prev => [...prev, user]);
+          setUsernameToAdd('');
+          Alert.alert('Success', `Added ${user.nickname} to group selection`);
+        }
+      }
+    } catch (err) {
+      Alert.alert('Error', 'User not found or connection error');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const filteredContacts = useMemo(() => {
+    if (!searchQuery.trim()) return contacts;
+    return contacts.filter(c => 
+      c.nickname?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.cid?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [contacts, searchQuery]);
+
+  const toggleMember = (contact) => {
+    if (selectedMembers.some(m => m.cid === contact.cid)) {
+      setSelectedMembers(prev => prev.filter(m => m.cid !== contact.cid));
+    } else {
+      setSelectedMembers(prev => [...prev, contact]);
+    }
+  };
 
   const handleCreate = async () => {
     if (!groupName.trim()) {
@@ -42,26 +79,27 @@ export default function CreateGroupScreen({ navigation }) {
       return;
     }
 
+    if (selectedMembers.length === 0) {
+      Alert.alert('Error', 'Please select at least one member');
+      return;
+    }
+
     try {
       setIsCreating(true);
 
-      // For demo: include sample members, in production these would come from user selection
-      const newGroup = createGroup({
+      const newGroup = await createGroup({
         name: groupName.trim(),
         description: description.trim(),
         mode,
-        creator: 'You',
-        members: SAMPLE_MEMBERS, // In production, replace with selected members
+        members: selectedMembers,
       });
 
       // Navigate to group chat
-      setTimeout(() => {
-        navigation.goBack();
-        navigation.navigate('GroupChat', {
-          groupId: newGroup.id,
-          group: newGroup,
-        });
-      }, 500);
+      navigation.goBack();
+      navigation.navigate('GroupChat', {
+        groupId: newGroup.groupId,
+        group: newGroup,
+      });
     } catch (error) {
       Alert.alert('Error', error?.message || 'Failed to create group');
     } finally {
@@ -164,15 +202,88 @@ export default function CreateGroupScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
+          {/* Add by Username */}
+          <Text style={styles.label}>Add Member by Username</Text>
+          <View style={styles.searchBarContainer}>
+            <View style={styles.inputWrapperSmall}>
+              <MaterialCommunityIcons name="at" size={18} color={COLORS.primary} />
+              <TextInput
+                style={styles.inputSmall}
+                value={usernameToAdd}
+                onChangeText={setUsernameToAdd}
+                placeholder="Enter exact username"
+                placeholderTextColor={COLORS.placeholder}
+                autoCapitalize="none"
+              />
+            </View>
+            <TouchableOpacity 
+              style={[styles.findBtn, (!usernameToAdd.trim() || isSearching) && styles.findBtnDisabled]}
+              onPress={handleAddByUsername}
+              disabled={!usernameToAdd.trim() || isSearching}
+            >
+              <Text style={styles.findBtnText}>{isSearching ? '...' : 'Add'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Member Selection */}
+          <View style={styles.memberHeader}>
+            <Text style={styles.label}>Select Members ({selectedMembers.length})</Text>
+            <View style={styles.searchBar}>
+              <Ionicons name="search" size={16} color={COLORS.textMuted} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search by username..."
+                placeholderTextColor={COLORS.placeholder}
+                onChangeText={setSearchQuery}
+                value={searchQuery}
+              />
+            </View>
+          </View>
+
+          {filteredContacts.length === 0 ? (
+            <View style={styles.emptyContacts}>
+              <Text style={styles.emptyText}>
+                {searchQuery ? 'No matching contacts found.' : 'No contacts found. Add contacts first.'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.contactsList}>
+              {filteredContacts.map((contact) => {
+                const isSelected = selectedMembers.some(m => m.cid === contact.cid);
+                return (
+                  <TouchableOpacity
+                    key={contact.cid}
+                    style={[styles.contactItem, isSelected && styles.contactItemActive]}
+                    onPress={() => toggleMember(contact)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.contactAvatar}>
+                      <Text style={styles.avatarText}>{contact.nickname?.[0] || '?'}</Text>
+                    </View>
+                    <View style={styles.contactInfo}>
+                      <Text style={styles.contactName}>{contact.nickname}</Text>
+                      {!contact.publicKey && (
+                        <Text style={styles.missingKeyText}>Missing Public Key (E2EE Warning)</Text>
+                      )}
+                    </View>
+                    <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
+                      {isSelected && <Ionicons name="checkmark" size={14} color={COLORS.white} />}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
           {/* Create Button */}
           <TouchableOpacity
             style={[
               styles.createBtn,
-              (!groupName.trim() || !description.trim() || isCreating) && styles.createBtnDisabled,
+              (!groupName.trim() || !description.trim() || selectedMembers.length === 0 || isCreating) && styles.createBtnDisabled,
             ]}
             onPress={handleCreate}
             activeOpacity={0.85}
-            disabled={!groupName.trim() || !description.trim() || isCreating}
+            disabled={!groupName.trim() || !description.trim() || selectedMembers.length === 0 || isCreating}
           >
             <Text style={styles.createBtnText}>
               {isCreating ? 'Creating...' : 'Create Group'}
@@ -292,7 +403,7 @@ const styles = StyleSheet.create({
   modeRow: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 32,
+    marginBottom: 24,
   },
   modeBtn: {
     flex: 1,
@@ -333,6 +444,76 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.regular,
     marginTop: 2,
   },
+  contactsList: {
+    gap: 10,
+    marginBottom: 32,
+  },
+  contactItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.inputBg,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    gap: 12,
+  },
+  contactItemActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryLight,
+  },
+  contactAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.avatarBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
+  contactInfo: {
+    flex: 1,
+  },
+  contactName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  missingKeyText: {
+    fontSize: 10,
+    color: COLORS.danger,
+    fontFamily: FONTS.regular,
+    marginTop: 2,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  emptyContacts: {
+    padding: 20,
+    alignItems: 'center',
+    backgroundColor: COLORS.inputBg,
+    borderRadius: 12,
+    marginBottom: 32,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+  },
   createBtn: {
     backgroundColor: COLORS.primary,
     borderRadius: 14,
@@ -348,5 +529,71 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.white,
     fontFamily: FONTS.bold,
+  },
+  memberHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.inputBg,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    flex: 1,
+    marginLeft: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 12,
+    color: COLORS.text,
+    fontFamily: FONTS.regular,
+    marginLeft: 6,
+    padding: 0,
+  },
+  searchBarContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  inputWrapperSmall: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: COLORS.inputBg,
+  },
+  inputSmall: {
+    flex: 1,
+    fontSize: 14,
+    color: COLORS.text,
+    marginLeft: 8,
+    padding: 0,
+  },
+  findBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    justifyContent: 'center',
+  },
+  findBtnDisabled: {
+    opacity: 0.5,
+  },
+  findBtnText: {
+    color: COLORS.white,
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

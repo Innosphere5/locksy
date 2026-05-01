@@ -29,6 +29,8 @@ export const STORAGE_KEYS = {
   BIOMETRIC_SECRET:  'losky_biometric_secret',  // Sensitive (Master Password)
   SCREENSHOT_BLOCK:  'losky_screenshot_block',   // Boolean string
   SCREEN_RECORDING_BLOCK: 'losky_screen_recording_block', // Boolean string
+  IDENTITY_PUB:      'losky_identity_pub',     // Plaintext B64 ECDH Public Key
+  IDENTITY_PRIV:     'losky_identity_priv',    // Encrypted B64 ECDH Private Key
 };
 
 // ── Bundle Operations ──────────────────────────────────────────────
@@ -406,3 +408,23 @@ export const isScreenRecordingBlockEnabled = async () => {
 export const setScreenRecordingBlockEnabled = async (enabled) => {
   await AsyncStorage.setItem(STORAGE_KEYS.SCREEN_RECORDING_BLOCK, String(enabled));
 };
+
+/**
+ * Save persistent identity keys.
+ */
+export const saveIdentityKeys = async (pubB64, privB64Encrypted) => {
+  await SecureStore.setItemAsync(STORAGE_KEYS.IDENTITY_PUB, pubB64);
+  await SecureStore.setItemAsync(STORAGE_KEYS.IDENTITY_PRIV, privB64Encrypted);
+};
+
+/**
+ * Load persistent identity keys.
+ */
+export const loadIdentityKeys = async () => {
+  const [pub, priv] = await Promise.all([
+    SecureStore.getItemAsync(STORAGE_KEYS.IDENTITY_PUB),
+    SecureStore.getItemAsync(STORAGE_KEYS.IDENTITY_PRIV),
+  ]);
+  return { publicKey: pub, privateKey: priv };
+};
+

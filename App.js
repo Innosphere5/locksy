@@ -7,8 +7,16 @@ import { CallsProvider } from "./context/CallsContext";
 import { CIDProvider } from "./context/CIDContext";
 import { SecurityProvider } from "./context/SecurityContext";
 
-// ── Onboarding ────────────────────────────────────────────────────────────────
-import SplashScreen from "./onboardings/SplashScreen";
+import { navigationRef } from "./src/utils/navigation";
+
+// ── New Secure Flow ──────────────────────────────────────────────────────────
+import SplashScreen from "./src/screens/SplashScreen";
+import LoginScreen from "./src/screens/LoginScreen";
+import HomeScreen from "./src/screens/HomeScreen";
+import BlockedScreen from "./src/screens/BlockedScreen";
+
+// ── Legacy Onboarding & Auth ──────────────────────────────────────────────────
+import LegacySplashScreen from "./onboardings/SplashScreen";
 import OnboardingScreen from "./onboardings/OnboardingScreen";
 import CIDScreen from "./onboardings/CIDScreen";
 import CIDGenerationScreen from "./onboardings/CIDGenerationScreen";
@@ -34,6 +42,7 @@ import SearchChatScreen from "./screens/chat/SearchChatScreen";
 import GroupScreen from "./screens/group/GroupScreen";
 import GroupChatScreen from "./screens/group/GroupChatScreen";
 import CreateGroupScreen from "./screens/group/CreateGroupScreen";
+import AddMembersScreen from "./screens/group/AddMembersScreen";
 import GroupInfoScreen from "./screens/group/GroupInfoScreen";
 import ApproveMembersScreen from "./screens/group/ApproveMembersScreen";
 import EmptyGroupScreen from "./screens/group/EmptyGroupScreen";
@@ -72,6 +81,7 @@ import MuteContactScreen from "./screens/settings/MuteContactScreen";
 import ShareCIDScreen from "./screens/common/ShareCIDScreen";
 import AddContactByCIDScreen from "./screens/common/AddContactByCIDScreen";
 import DeletedMessageStatesModal from "./screens/modals/DeletedMessageStatesModal";
+import GroupInviteModal from "./screens/modals/GroupInviteModal";
 
 const Stack = createNativeStackNavigator();
 
@@ -81,14 +91,20 @@ export default function App() {
       <SecurityProvider>
         <GroupsProvider>
           <CallsProvider>
-            <NavigationContainer>
+            <NavigationContainer ref={navigationRef}>
               <StatusBar style="dark" />
               <Stack.Navigator
                 initialRouteName="Splash"
                 screenOptions={{ headerShown: false, animation: "fade" }}
               >
-                {/* ── Onboarding Flow ── */}
+                {/* ── New Secure Auth Flow ── */}
                 <Stack.Screen name="Splash" component={SplashScreen} />
+                <Stack.Screen name="Login" component={LoginScreen} />
+                <Stack.Screen name="Home" component={HomeScreen} />
+                <Stack.Screen name="Blocked" component={BlockedScreen} />
+
+                {/* ── Legacy Onboarding Flow ── */}
+                <Stack.Screen name="LegacySplash" component={LegacySplashScreen} />
                 <Stack.Screen name="Onboarding" component={OnboardingScreen} />
                 <Stack.Screen
                   name="CIDGeneration"
@@ -171,6 +187,11 @@ export default function App() {
                 <Stack.Screen
                   name="GroupInfo"
                   component={GroupInfoScreen}
+                  options={{ animation: "slide_from_right" }}
+                />
+                <Stack.Screen
+                  name="AddMembers"
+                  component={AddMembersScreen}
                   options={{ animation: "slide_from_right" }}
                 />
                 <Stack.Screen
@@ -342,6 +363,7 @@ export default function App() {
                   }}
                 />
               </Stack.Navigator>
+              <GroupInviteModal />
             </NavigationContainer>
           </CallsProvider>
         </GroupsProvider>

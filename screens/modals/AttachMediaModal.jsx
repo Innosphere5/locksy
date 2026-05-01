@@ -24,7 +24,7 @@ export default function AttachMediaModal({
       id: 'photo', 
       icon: '📷', 
       label: 'PHOTO',
-      type: 'photo',
+      type: 'image',
       color: COLORS.avatar.blue,
       description: 'Photo from gallery'
     },
@@ -69,7 +69,7 @@ export default function AttachMediaModal({
         type: option.type,
         id: option.id,
         label: option.label,
-        isViewOnce: (option.type === 'photo' || option.type === 'video' || option.type === 'file' || option.type === 'voice') ? isViewOnce : false,
+        isViewOnce: (option.type === 'image' || option.type === 'video' || option.type === 'file' || option.type === 'voice') ? isViewOnce : false,
       });
     }
     // Auto-close after selection

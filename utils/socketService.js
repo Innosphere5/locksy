@@ -15,10 +15,17 @@ class SocketService {
     this.socket = null;
     this.isConnected = false;
     this.userCid = null;
-    this.userData = null; // Store { cid, nickname, avatar } for re-registration
+    this.userData = null; // Store { cid, nickname, avatar, publicKey } for re-registration
     this.callbacks = new Map(); // eventName -> Set of callbacks
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 10;
+  }
+
+  /**
+   * Set user CID for the service
+   */
+  setUserCid(cid) {
+    this.userCid = cid;
   }
 
   /**
@@ -96,13 +103,16 @@ class SocketService {
     this.socket.removeAllListeners("contact:request");
     this.socket.removeAllListeners("contact:accepted");
     this.socket.removeAllListeners("user:status");
+    this.socket.removeAllListeners("group:invite");
+    this.socket.removeAllListeners("group:update");
+    this.socket.removeAllListeners("room:joined");
 
     // Standard Message Listener
     this.socket.on("message:received", async (message) => {
       console.log("[SocketService] Global message:received triggered");
       
       // PERSIST IMMEDIATELY TO LOCAL STORAGE
-      await messageStorage.saveMessage(message.roomId, message);
+      await messageStorage.saveMessage(message.roomId || message.groupId, message);
       
       // Dispatch to UI listeners
       this._dispatch("message:received", message);
@@ -156,6 +166,18 @@ class SocketService {
     // Status Listener
     this.socket.on("user:status", (data) => {
       this._dispatch("user:status", data);
+    });
+
+    // Group Invitation Listener
+    this.socket.on("group:invite", (data) => {
+      console.log("[SocketService] Received group:invite", data.groupName);
+      this._dispatch("group:invite", data);
+    });
+
+    // Group Update Listener
+    this.socket.on("group:update", (data) => {
+      console.log("[SocketService] Received group:update", data.type);
+      this._dispatch("group:update", data);
     });
 
     // Join room status
@@ -240,15 +262,15 @@ class SocketService {
   }
 
   /**
-   * Register user with CID
+   * Register user with CID and Public Key
    */
-  registerUser(cid, nickname, avatar = null) {
+  registerUser(cid, nickname, avatar = null, publicKey = null) {
     return new Promise((resolve, reject) => {
       if (!this.socket) return reject(new Error("Socket not connected"));
       this.userCid = cid;
 
       console.log(`[SocketService] Registering user: ${cid}`);
-      const regData = { cid, nickname, avatar };
+      const regData = { cid, nickname, avatar, publicKey };
       this.socket.emit("register", regData);
 
       const onRegisterSuccess = (data) => {
@@ -276,13 +298,45 @@ class SocketService {
   }
 
   /**
-   * Search for contact (Just discovery)
+   * Search for contact by CID (Just discovery)
    */
   searchContact(otherCid) {
     return new Promise((resolve, reject) => {
       if (!this.socket) return reject(new Error("Socket not connected"));
       
       this.socket.emit("search:cid", { myCid: this.userCid, otherCid });
+
+      const onSuccess = (data) => {
+        this.socket.off("search:success", onSuccess);
+        this.socket.off("search:error", onError);
+        resolve(data);
+      };
+
+      const onError = (err) => {
+        this.socket.off("search:success", onSuccess);
+        this.socket.off("search:error", onError);
+        reject(new Error(err.message || "Search failed"));
+      };
+
+      this.socket.on("search:success", onSuccess);
+      this.socket.on("search:error", onError);
+
+      setTimeout(() => {
+        this.socket.off("search:success", onSuccess);
+        this.socket.off("search:error", onError);
+        reject(new Error("Search timeout"));
+      }, 10000);
+    });
+  }
+
+  /**
+   * Search for contact by Nickname
+   */
+  searchContactByNickname(nickname) {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) return reject(new Error("Socket not connected"));
+      
+      this.socket.emit("search:nickname", { nickname });
 
       const onSuccess = (data) => {
         this.socket.off("search:success", onSuccess);
@@ -352,7 +406,7 @@ class SocketService {
   /**
    * Send message
    */
-  sendMessage(roomId, message, senderNickname) {
+  sendMessage(roomId, message, senderNickname, senderAvatar) {
     if (!this.socket || !this.userCid) return;
 
     // message can be a string or an object { type, text, uri, etc }
@@ -361,6 +415,7 @@ class SocketService {
       message,
       senderCid: this.userCid,
       senderNickname,
+      senderAvatar,
     });
   }
 

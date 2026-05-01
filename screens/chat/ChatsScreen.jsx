@@ -14,6 +14,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "../../theme";
 import { useCalls } from "../../context/CallsContext";
+import { useGroups } from "../../context/GroupsContext";
 import { CIDContext } from "../../context/CIDContext";
 import useSocketNavigation from "../../hooks/useSocketNavigation";
 import messageStorage from "../../utils/messageStorage";
@@ -139,8 +140,10 @@ export default function ChatsScreen({ navigation }) {
 
   // Get saved contacts from context
   const { contacts, pendingRequests, acceptRequest } = React.useContext(CIDContext);
+  const { groupInvites, acceptGroupInvite, rejectGroupInvite } = useGroups();
 
   const [stealthMode, setStealthMode] = useState(true);
+
   const [search, setSearch] = useState("");
   const [lastMessages, setLastMessages] = useState({});
 
@@ -150,7 +153,7 @@ export default function ChatsScreen({ navigation }) {
       const summaries = await messageStorage.getChatListSub();
       const msgMap = {};
       summaries.forEach(s => {
-        msgMap[s.roomId] = s;
+        msgMap[s.groupId || s.roomId] = s;
       });
       setLastMessages(msgMap);
     };
@@ -162,7 +165,7 @@ export default function ChatsScreen({ navigation }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Transform contacts into display format
+  // Transform contacts into display format (Strictly 1-to-1)
   const formattedChats = contacts.map((contact) => {
     const lastMsgData = lastMessages[contact.roomId];
     return {
@@ -177,13 +180,18 @@ export default function ChatsScreen({ navigation }) {
       avatar: contact.avatar || "👤",
       avatarBg: "#EEF2FF",
       locked: false,
-      expires: null,
+      isGroup: false, // Ensure this is false
       cid: contact.cid,
       roomId: contact.roomId,
     };
   });
 
-  const filtered = formattedChats.filter(
+  const allChats = formattedChats.sort((a, b) => {
+    if (a.time && b.time) return b.time.localeCompare(a.time);
+    return 0;
+  });
+
+  const filtered = allChats.filter(
     (c) =>
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.lastMessage.toLowerCase().includes(search.toLowerCase()),
@@ -261,6 +269,38 @@ export default function ChatsScreen({ navigation }) {
               >
                 <Text style={styles.acceptBtnText}>Accept</Text>
               </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Group Invitations Section */}
+      {groupInvites.length > 0 && (
+        <View style={[styles.requestsContainer, { borderColor: COLORS.primary + '40', backgroundColor: COLORS.primary + '08' }]}>
+          <Text style={[styles.requestsTitle, { color: COLORS.primary }]}>Group Invitations ({groupInvites.length})</Text>
+          {groupInvites.map((inv) => (
+            <View key={inv.groupId} style={styles.requestRow}>
+              <View style={[styles.requestAvatar, { backgroundColor: COLORS.primary + '15' }]}>
+                <Text style={{ fontSize: 20 }}>👥</Text>
+              </View>
+              <View style={styles.requestInfo}>
+                <Text style={styles.requestName}>{inv.groupName}</Text>
+                <Text style={styles.requestCid}>From {inv.fromNickname}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  style={[styles.acceptBtn, { backgroundColor: '#F1F5F9' }]}
+                  onPress={() => rejectGroupInvite(inv.groupId)}
+                >
+                  <Text style={[styles.acceptBtnText, { color: '#64748B' }]}>Decline</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.acceptBtn}
+                  onPress={() => acceptGroupInvite(inv)}
+                >
+                  <Text style={styles.acceptBtnText}>Join</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))}
         </View>

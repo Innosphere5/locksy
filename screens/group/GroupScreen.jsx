@@ -11,6 +11,7 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SHADOWS } from '../../theme';
 import { useGroups } from '../../context/GroupsContext';
+import { useCIDContext } from '../../context/CIDContext';
 
 const GroupItem = ({ item, onPress }) => (
   <TouchableOpacity style={styles.groupItem} onPress={onPress} activeOpacity={0.75}>
@@ -20,14 +21,14 @@ const GroupItem = ({ item, onPress }) => (
     <View style={styles.groupInfo}>
       <View style={styles.groupRow}>
         <Text style={styles.groupName}>{item.name}</Text>
-        <Text style={styles.groupTime}>{item.time}</Text>
+        <Text style={styles.groupTime}>{item.time || new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
       </View>
       <View style={styles.groupRow}>
         <View style={styles.groupMeta}>
           <View style={[styles.badge, { backgroundColor: item.badgeColor }]}>
             <Text style={[styles.badgeText, { color: item.badgeText }]}>{item.badge}</Text>
           </View>
-          <Text style={styles.memberCount}>{item.members} members · E2EE</Text>
+          <Text style={styles.memberCount}>{item.members?.length || 0} members · E2EE</Text>
         </View>
         {item.unread > 0 && (
           <View style={styles.unreadBadge}>
@@ -40,12 +41,41 @@ const GroupItem = ({ item, onPress }) => (
 );
 
 export default function GroupsScreen({ navigation }) {
-  const { groups, setSelectedGroupId } = useGroups();
+  const { groups, groupInvites, setSelectedGroupId, acceptGroupInvite, rejectGroupInvite } = useGroups();
+  const { userNickname } = useCIDContext();
 
   const handleGroupPress = (group) => {
-    setSelectedGroupId(group.id);
+    setSelectedGroupId(group.groupId);
     navigation.navigate('GroupChat', { group });
   };
+
+  const handleAcceptInvite = async (invite) => {
+    await acceptGroupInvite(invite);
+    // After accepting, the group will appear in the list via the socket update
+  };
+
+  const renderInviteItem = ({ item }) => (
+    <View style={styles.inviteCard}>
+      <View style={styles.inviteInfo}>
+        <Text style={styles.inviteTitle}>Invite: {item.groupName}</Text>
+        <Text style={styles.inviteSub}>From {item.fromNickname}</Text>
+      </View>
+      <View style={styles.inviteActions}>
+        <TouchableOpacity 
+          style={styles.declineBtn} 
+          onPress={() => rejectGroupInvite(item.groupId)}
+        >
+          <Text style={styles.declineText}>Decline</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.acceptBtn} 
+          onPress={() => handleAcceptInvite(item)}
+        >
+          <Text style={styles.acceptText}>Join</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
@@ -82,13 +112,24 @@ export default function GroupsScreen({ navigation }) {
         </View>
       </View>
 
-      {groups.length === 0 ? (
+      {groupInvites.length > 0 && (
+        <View style={styles.invitesSection}>
+          <FlatList
+            data={groupInvites}
+            keyExtractor={(item) => item.groupId}
+            renderItem={renderInviteItem}
+            scrollEnabled={false}
+          />
+        </View>
+      )}
+
+      {groups.length === 0 && groupInvites.length === 0 ? (
         renderEmptyState()
       ) : (
         <>
           <FlatList
             data={groups}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => item.groupId}
             renderItem={({ item }) => (
               <GroupItem
                 item={item}
@@ -325,5 +366,68 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  invitesSection: {
+    backgroundColor: COLORS.background,
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  inviteCard: {
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOWS.sm,
+    marginBottom: 10,
+  },
+  inviteInfo: {
+    flex: 1,
+  },
+  inviteTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.text,
+    fontFamily: FONTS.bold,
+  },
+  inviteSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontFamily: FONTS.regular,
+    marginTop: 2,
+  },
+  inviteActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  acceptBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  acceptText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: FONTS.semiBold,
+  },
+  declineBtn: {
+    backgroundColor: COLORS.inputBg,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  declineText: {
+    color: COLORS.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: FONTS.semiBold,
   },
 });

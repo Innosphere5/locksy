@@ -27,6 +27,7 @@ import {
   encryptAESGCM,
   decryptAESGCM,
   generateCID,
+  generateECDHKeyPair,
 } from "../utils/cryptoEngine";
 import {
   saveCIDBundle,
@@ -40,6 +41,8 @@ import {
   loadContacts,
   saveContacts,
   addContact as saveContactToStorage,
+  saveIdentityKeys,
+  loadIdentityKeys,
 } from "../utils/secureStorage";
 import socketService from "../utils/socketService";
 import AppConfig from "../config/appConfig";
@@ -51,6 +54,8 @@ export const CIDProvider = ({ children }) => {
   const [userCID, setUserCIDState] = useState(null);
   const [userNickname, setUserNicknameState] = useState("");
   const [userAvatar, setUserAvatarState] = useState(null);
+  const [identityPubKey, setIdentityPubKey] = useState(null);
+  const identityPrivKeyRef = useRef(null); // Decrypted private key in RAM
 
   // ── Session State ────────────────────────────────────────────────
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -96,6 +101,14 @@ export const CIDProvider = ({ children }) => {
            }
         }
         setContacts(uniqueContacts);
+
+        // AUTO-VERIFY: Refresh contacts missing public keys
+        uniqueContacts.forEach(c => {
+          if (!c.publicKey) {
+            console.log(`[CIDContext] Contact ${c.nickname} missing public key, scheduling refresh...`);
+            setTimeout(() => refreshContactPublicKey(c.cid), 2000);
+          }
+        });
       } catch (error) {
         console.error('[CIDContext] Error loading contacts:', error);
       }
@@ -112,14 +125,19 @@ export const CIDProvider = ({ children }) => {
 
     const initializeSocket = async () => {
       try {
-        const serverUrl = AppConfig.SERVER.URL;
+        const serverUrl = AppConfig.SOCKET.URL;
         console.log("[CIDContext] Initializing Socket.io connection...");
         console.log(`[CIDContext] Server URL: ${serverUrl}`);
 
         await socketService.connect(serverUrl);
 
-        // Register user with Socket.io
-        await socketService.registerUser(userCID, userNickname, userAvatar);
+        // Register user with Socket.io (Including Public Key for Discovery)
+        let pubKey = identityPubKey;
+        if (!pubKey) {
+           const { publicKey } = await loadIdentityKeys();
+           pubKey = publicKey;
+        }
+        await socketService.registerUser(userCID, userNickname, userAvatar, pubKey);
 
         setSocketConnected(true);
         setSocketError(null);
@@ -130,6 +148,10 @@ export const CIDProvider = ({ children }) => {
         // Unified event listeners using the new multiplexed socketService
         socketService.on("contact:request", (data) => {
           console.log("[CIDContext] Received contact request from:", data.fromNickname);
+          // If we already have this contact, update their public key if provided
+          if (data.publicKey) {
+             setContacts(prev => prev.map(c => c.cid === data.fromCid ? { ...c, publicKey: data.publicKey } : c));
+          }
           setPendingRequests(prev => {
             if (prev.some(r => r.fromCid === data.fromCid)) return prev;
             return [...prev, data];
@@ -145,6 +167,7 @@ export const CIDProvider = ({ children }) => {
             cid: otherUser.cid,
             nickname: otherUser.nickname,
             avatar: otherUser.avatar,
+            publicKey: otherUser.publicKey,
             status: "online",
             verified: true,
             addedAt: new Date().toISOString(),
@@ -163,7 +186,7 @@ export const CIDProvider = ({ children }) => {
           setContacts((prev) =>
             prev.map((contact) =>
               contact.cid === data.cid
-                ? { ...contact, status: data.status }
+                ? { ...contact, status: data.status, publicKey: data.publicKey || contact.publicKey }
                 : contact,
             ),
           );
@@ -186,7 +209,7 @@ export const CIDProvider = ({ children }) => {
         socketInitializedRef.current = false;
       }
     };
-  }, [isUnlocked, userCID, userNickname, userAvatar]);
+  }, [isUnlocked, userCID, userNickname, userAvatar, identityPubKey]);
 
   // ── Persist contacts to storage when they change ────────────────
   useEffect(() => {
@@ -242,6 +265,18 @@ export const CIDProvider = ({ children }) => {
           console.log("[CIDContext] Encrypting current nickname...");
           encryptedNickname = await encryptAESGCM(key, userNickname);
         }
+
+        // ── Identity Key Generation ─────────────────────────────────
+        console.log("[CIDContext] Generating persistent Identity Keys...");
+        const { publicKeyB64, privateKeyB64 } = await generateECDHKeyPair();
+        
+        // Encrypt private key with session key before storage
+        const encryptedPrivKey = await encryptAESGCM(key, privateKeyB64);
+        await saveIdentityKeys(publicKeyB64, encryptedPrivKey);
+        
+        setIdentityPubKey(publicKeyB64);
+        identityPrivKeyRef.current = privateKeyB64;
+        console.log("[CIDContext] Identity Keys saved and cached.");
 
         // Persist encrypted bundle
         console.log("[CIDContext] Saving bundle to SecureStore...");
@@ -320,6 +355,28 @@ export const CIDProvider = ({ children }) => {
       await resetFailCount();
       setFailCount(0);
 
+      // Load and decrypt Identity Keys
+      const { publicKey, privateKey: encryptedPriv } = await loadIdentityKeys();
+      if (publicKey && encryptedPriv) {
+        try {
+          const decryptedPriv = await decryptAESGCM(key, encryptedPriv);
+          setIdentityPubKey(publicKey);
+          identityPrivKeyRef.current = decryptedPriv;
+          console.log("[CIDContext] Identity keys loaded and decrypted");
+        } catch (e) {
+          console.error("[CIDContext] Failed to decrypt identity keys:", e);
+        }
+      } else {
+        // BACKWARD COMPATIBILITY: Generate keys if missing (older installations)
+        console.log("[CIDContext] Identity keys missing, generating now...");
+        const { publicKeyB64, privateKeyB64 } = await generateECDHKeyPair();
+        const encPriv = await encryptAESGCM(key, privateKeyB64);
+        await saveIdentityKeys(publicKeyB64, encPriv);
+        setIdentityPubKey(publicKeyB64);
+        identityPrivKeyRef.current = privateKeyB64;
+        console.log("[CIDContext] Identity keys generated and saved.");
+      }
+
       return "success";
     } catch (error) {
       // Wrong password OR tampered data — both lead to fail count increment
@@ -335,6 +392,8 @@ export const CIDProvider = ({ children }) => {
         setUserCIDState(null);
         setUserNicknameState("");
         setUserAvatarState(null);
+        setIdentityPubKey(null);
+        identityPrivKeyRef.current = null;
         setIsUnlocked(false);
         setFailCount(0);
         return "nuke";
@@ -360,6 +419,8 @@ export const CIDProvider = ({ children }) => {
     masterKeyRef.current = null;
     setUserCIDState(null);
     setUserNicknameState("");
+    setIdentityPubKey(null);
+    identityPrivKeyRef.current = null;
     setIsUnlocked(false);
 
     // Disconnect Socket.io
@@ -424,6 +485,25 @@ export const CIDProvider = ({ children }) => {
   }, []);
 
   /**
+   * Force refresh of a contact's public key from the server
+   */
+  const refreshContactPublicKey = useCallback(async (cid) => {
+    if (!socketConnected) return;
+    try {
+      console.log(`[CIDContext] Refreshing public key for: ${cid}`);
+      const result = await socketService.searchContact(cid);
+      if (result && result.otherUser && result.otherUser.publicKey) {
+        setContacts(prev => prev.map(c => 
+          c.cid === cid ? { ...c, publicKey: result.otherUser.publicKey } : c
+        ));
+        console.log(`[CIDContext] Public key updated for ${cid}`);
+      }
+    } catch (err) {
+      console.error(`[CIDContext] Failed to refresh public key for ${cid}:`, err);
+    }
+  }, [socketConnected]);
+
+  /**
    * Discovery search (does not create room)
    */
   const searchContactByCID = useCallback(
@@ -432,6 +512,19 @@ export const CIDProvider = ({ children }) => {
         return Promise.reject(new Error("Socket not connected"));
       }
       return socketService.searchContact(otherCid);
+    },
+    [socketConnected],
+  );
+
+  /**
+   * Discovery search by Nickname
+   */
+  const searchContactByNickname = useCallback(
+    (nickname) => {
+      if (!socketConnected) {
+        return Promise.reject(new Error("Socket not connected"));
+      }
+      return socketService.searchContactByNickname(nickname);
     },
     [socketConnected],
   );
@@ -536,9 +629,15 @@ export const CIDProvider = ({ children }) => {
     socketConnected,
     socketError,
     searchContactByCID,
+    searchContactByNickname,
     sendMessage,
     getChatHistory,
     onMessageReceived,
+
+    // Identity Keys (for secure key exchange)
+    identityPubKey,
+    identityPrivKeyRef,
+    refreshContactPublicKey,
   };
 
   return <CIDContext.Provider value={value}>{children}</CIDContext.Provider>;

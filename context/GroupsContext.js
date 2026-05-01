@@ -1,5 +1,17 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { COLORS } from '../theme';
+import socketService from '../utils/socketService';
+import { useCIDContext } from './CIDContext';
+import { 
+  generateRandomBytes, 
+  toBase64, 
+  encryptAESGCM, 
+  decryptAESGCM,
+  deriveSharedSecret,
+  fromBase64
+} from '../utils/cryptoEngine';
+import messageStorage from '../utils/messageStorage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const GroupsContext = createContext();
 
@@ -11,264 +23,345 @@ export const useGroups = () => {
   return context;
 };
 
-// Initial sample groups data
-const INITIAL_GROUPS = [
-  {
-    id: '1',
-    name: 'OP-SECTOR-7',
-    description: 'Field team Alpha secure coordination',
-    members: 5,
-    badge: 'CLOSED',
-    badgeColor: COLORS.badgeClosed,
-    badgeText: COLORS.badgeClosedText,
-    time: '08:12',
-    unread: 1,
-    e2ee: true,
-    mode: 'closed',
-    admin: 'Ghost_Fox',
-    avatar: '👥',
-    avatarBg: '#DBEAFE',
-    createdAt: new Date().toISOString(),
-    memberList: [
-      { id: '1', name: 'Ghost_Fox', role: 'ADMIN', nickname: 'Ghost_Fox', status: 'online' },
-      { id: '2', name: 'Shadow_Wolf', role: 'MEMBER', nickname: 'Shadow_Wolf', status: 'offline' },
-      { id: '3', name: 'Iron_Mask', role: 'MEMBER', nickname: 'Iron_Mask', status: 'online' },
-      { id: '4', name: 'CipherX', role: 'MEMBER', nickname: 'CipherX', status: 'offline' },
-      { id: '5', name: 'NightOwl', role: 'MEMBER', nickname: 'NightOwl', status: 'online' },
-    ],
-    pendingRequests: [
-      { id: 'req1', name: 'New_User_01', time: '5 min ago' },
-      { id: 'req2', name: 'DarkRunner_X', time: '12 min ago' },
-      { id: 'req3', name: 'Cipher_99', time: '1h ago' },
-    ],
-  },
-  {
-    id: '2',
-    name: 'Alpha Team',
-    description: 'Team coordination and updates',
-    members: 3,
-    badge: 'APPROVAL',
-    badgeColor: COLORS.badgeApproval,
-    badgeText: COLORS.badgeApprovalText,
-    time: 'Yesterday',
-    unread: 0,
-    e2ee: true,
-    mode: 'approval',
-    admin: 'Shadow_Wolf',
-    avatar: '👥',
-    avatarBg: '#DBEAFE',
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    memberList: [
-      { id: '2', name: 'Shadow_Wolf', role: 'ADMIN', nickname: 'Shadow_Wolf', status: 'offline' },
-      { id: '3', name: 'Iron_Mask', role: 'MEMBER', nickname: 'Iron_Mask', status: 'online' },
-      { id: '6', name: 'Phantom_Recon', role: 'MEMBER', nickname: 'Phantom_Recon', status: 'offline' },
-    ],
-    pendingRequests: [],
-  },
-];
-
 export const GroupsProvider = ({ children }) => {
-  const [groups, setGroups] = useState(INITIAL_GROUPS);
+  const { userCID, userNickname, identityPubKey, identityPrivKeyRef, socketConnected } = useCIDContext();
+  const [groups, setGroups] = useState([]);
+  const [groupInvites, setGroupInvites] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const groupsRef = useRef([]);
 
-  /**
-   * Create a new group
-   * @param {Object} groupData - { name, description, mode, memberIds }
-   * @returns {Object} Created group
-   */
-  const createGroup = useCallback((groupData) => {
-    const newGroup = {
-      id: String(Date.now()),
-      name: groupData.name,
-      description: groupData.description || '',
-      members: (groupData.memberIds || []).length + 1, // +1 for creator
-      badge: groupData.mode === 'closed' ? 'CLOSED' : 'APPROVAL',
-      badgeColor: groupData.mode === 'closed' ? COLORS.badgeClosed : COLORS.badgeApproval,
-      badgeText: groupData.mode === 'closed' ? COLORS.badgeClosedText : COLORS.badgeApprovalText,
-      time: 'now',
-      unread: 0,
-      e2ee: true,
-      mode: groupData.mode,
-      admin: groupData.creator || 'You',
-      avatar: '👥',
-      avatarBg: '#DBEAFE',
-      createdAt: new Date().toISOString(),
-      memberList: [
-        {
-          id: '0',
-          name: groupData.creator || 'You',
-          role: 'ADMIN',
-          nickname: groupData.creator || 'You',
-          status: 'online',
-        },
-        ...(groupData.members || []),
-      ],
-      pendingRequests: groupData.mode === 'approval' ? (groupData.members || []) : [],
+  // Sync ref with state
+  useEffect(() => {
+    groupsRef.current = groups;
+    // Persist groups
+    if (groups.length > 0) {
+      AsyncStorage.setItem('losky_groups', JSON.stringify(groups)).catch(err => console.error('[GroupsContext] Save failed:', err));
+    }
+  }, [groups]);
+
+  // Persist invites
+  useEffect(() => {
+    if (groupInvites.length > 0) {
+       AsyncStorage.setItem('losky_group_invites', JSON.stringify(groupInvites)).catch(err => console.error('[GroupsContext] Save invites failed:', err));
+    }
+  }, [groupInvites]);
+
+  // Load from storage on mount
+  useEffect(() => {
+    const loadFromStorage = async () => {
+      try {
+        const savedGroups = await AsyncStorage.getItem('losky_groups');
+        if (savedGroups) setGroups(JSON.parse(savedGroups));
+        
+        const savedInvites = await AsyncStorage.getItem('losky_group_invites');
+        if (savedInvites) setGroupInvites(JSON.parse(savedInvites));
+      } catch (err) {
+        console.error('[GroupsContext] Load failed:', err);
+      }
     };
-
-    setGroups((prev) => [newGroup, ...prev]);
-    return newGroup;
+    loadFromStorage();
   }, []);
+
+  // ── Socket Events for Groups ─────────────────────────────────────
+  useEffect(() => {
+    if (!socketConnected) return;
+
+    const unsubscribeUpdate = socketService.on('group:update', async (data) => {
+      console.log('[GroupsContext] Received group update:', data.type);
+      
+      if (data.type === 'created' || data.type === 'added_to_group') {
+        const group = data.group;
+        setGroups(prev => {
+          if (prev.some(g => g.groupId === group.groupId)) return prev;
+          return [...prev, group];
+        });
+        // Auto-join room and try decrypting key
+        socketService.joinRoom(group.groupId);
+        setTimeout(() => tryDecryptGroupKey(group), 500);
+      } else if (data.type === 'member_added') {
+        setGroups(prev => prev.map(g => 
+          g.groupId === data.groupId 
+            ? { ...g, members: [...g.members, data.member] } 
+            : g
+        ));
+      } else if (data.type === 'member_removed') {
+        setGroups(prev => prev.map(g => 
+          g.groupId === data.groupId 
+            ? { ...g, members: g.members.filter(m => m.cid !== data.memberCid) } 
+            : g
+        ));
+      } else if (data.type === 'removed_from_group') {
+        setGroups(prev => prev.filter(g => g.groupId !== data.groupId));
+      } else if (data.type === 'admin_promoted') {
+        setGroups(prev => prev.map(g => 
+          g.groupId === data.groupId 
+            ? { ...g, members: g.members.map(m => m.cid === data.memberCid ? { ...m, role: 'ADMIN' } : m) } 
+            : g
+        ));
+      }
+    });
+
+    const unsubscribeMessage = socketService.on('message:received', async (message) => {
+       if (message.groupId) {
+         console.log('[GroupsContext] Received group message for:', message.groupId);
+       }
+    });
+
+    const unsubscribeInvite = socketService.on('group:invite', (data) => {
+      console.log('[GroupsContext] Received group invite:', data.groupName);
+      setGroupInvites(prev => {
+        if (prev.some(inv => inv.groupId === data.groupId)) return prev;
+        return [...prev, data];
+      });
+    });
+
+    return () => {
+      unsubscribeUpdate();
+      unsubscribeMessage();
+      unsubscribeInvite();
+    };
+  }, [socketConnected]);
 
   /**
    * Get group by ID
    */
   const getGroup = useCallback(
     (groupId) => {
-      return groups.find((g) => g.id === groupId);
+      return groups.find((g) => g.groupId === groupId);
     },
     [groups]
   );
 
   /**
-   * Get all groups
+   * Create a new group with E2EE
    */
-  const getAllGroups = useCallback(() => {
-    return groups;
-  }, [groups]);
+  const createGroup = useCallback(async (groupData) => {
+    if (!socketConnected) throw new Error("Connection lost");
+
+    // 1. Generate Group Key (AES-256)
+    const groupKeyRaw = generateRandomBytes(32);
+    const groupKeyB64 = toBase64(groupKeyRaw);
+
+    // 2. Encrypt Group Key for each member using their Public Key
+    const membersWithEncryptedKey = await Promise.all(groupData.members.map(async (m) => {
+       let publicKey = m.publicKey;
+       
+       // TRY TO FETCH MISSING PUBLIC KEY FROM SERVER
+       if (!publicKey) {
+         console.log(`[GroupsContext] Member ${m.nickname} missing public key, fetching from server...`);
+         try {
+           const searchResult = await socketService.searchContact(m.cid);
+           if (searchResult && searchResult.otherUser && searchResult.otherUser.publicKey) {
+             publicKey = searchResult.otherUser.publicKey;
+             console.log(`[GroupsContext] Successfully fetched public key for ${m.nickname}`);
+           }
+         } catch (err) {
+           console.error(`[GroupsContext] Failed to fetch public key for ${m.nickname}:`, err);
+         }
+       }
+
+       if (!publicKey) {
+         console.warn(`[GroupsContext] Member ${m.nickname} missing public key! E2EE will fail for them.`);
+         return { ...m, role: 'MEMBER', encryptedKey: null };
+       }
+       
+       // Derive shared secret via ECDH (My Private + Their Public)
+       const sharedSecret = await deriveSharedSecret(identityPrivKeyRef.current, publicKey);
+       // Encrypt Group Key using Shared Secret
+       const encryptedKey = await encryptAESGCM(sharedSecret, groupKeyB64);
+       
+       return {
+         cid: m.cid,
+         nickname: m.nickname,
+         role: 'MEMBER',
+         encryptedKey
+       };
+    }));
+
+    // Add creator as Admin
+    membersWithEncryptedKey.push({
+      cid: userCID,
+      nickname: userNickname,
+      role: 'ADMIN',
+      encryptedKey: null // Creator already knows the key
+    });
+
+    const finalGroupData = {
+      name: groupData.name,
+      description: groupData.description,
+      creatorCid: userCID,
+      creatorPublicKey: identityPubKey, // Store creator's public key for others to decrypt the group key
+      members: membersWithEncryptedKey
+    };
+
+    // 3. Emit to server
+    socketService.socket.emit("group:create", finalGroupData);
+
+    // 4. Store locally
+    const newGroupId = 'pending-' + Date.now();
+    const newGroup = {
+       ...finalGroupData,
+       groupId: newGroupId,
+       groupKey: groupKeyB64 // Store locally for immediate use
+    };
+
+    // Success listener (one-time)
+    socketService.socket.once("group:create:success", (group) => {
+       setGroups(prev => prev.map(g => g.groupId === newGroupId ? { ...group, groupKey: groupKeyB64 } : g));
+       // Join the room for real-time messages
+       socketService.joinRoom(group.groupId);
+    });
+
+    setGroups(prev => [...prev, newGroup]);
+    return newGroup;
+  }, [socketConnected, userCID, userNickname, identityPrivKeyRef, identityPubKey]);
 
   /**
-   * Update group
+   * Send Group Invite
    */
-  const updateGroup = useCallback((groupId, updates) => {
-    setGroups((prev) =>
-      prev.map((g) =>
-        g.id === groupId
-          ? {
-              ...g,
-              ...updates,
-            }
-          : g
-      )
-    );
-  }, []);
+  const sendGroupInvite = useCallback(async (groupId, memberCid, nickname, publicKey) => {
+    if (!socketConnected) return;
+    const group = groupsRef.current.find(g => g.groupId === groupId);
+    if (!group || !group.groupKey) return;
 
-  /**
-   * Delete group
-   */
-  const deleteGroup = useCallback((groupId) => {
-    setGroups((prev) => prev.filter((g) => g.id !== groupId));
-    if (selectedGroupId === groupId) {
-      setSelectedGroupId(null);
+    try {
+      const sharedSecret = await deriveSharedSecret(identityPrivKeyRef.current, publicKey);
+      const encryptedKey = await encryptAESGCM(sharedSecret, group.groupKey);
+      
+      socketService.socket.emit("group:invite", {
+        groupId,
+        adminCid: userCID,
+        memberCid,
+        nickname,
+        encryptedKey
+      });
+    } catch (err) {
+      console.error("[GroupsContext] Failed to send invite:", err);
     }
-  }, [selectedGroupId]);
+  }, [socketConnected, userCID, identityPrivKeyRef]);
 
   /**
-   * Add member to group
+   * Accept Group Invite
    */
-  const addMember = useCallback((groupId, member) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id === groupId) {
-          const memberExists = g.memberList.some((m) => m.id === member.id);
-          if (!memberExists) {
-            return {
-              ...g,
-              memberList: [...g.memberList, { ...member, role: 'MEMBER' }],
-              members: g.members + 1,
-            };
-          }
-        }
-        return g;
-      })
-    );
+  const acceptGroupInvite = useCallback(async (invite) => {
+    if (!socketConnected) return;
+    
+    socketService.socket.emit("group:invite:accept", {
+      groupId: invite.groupId,
+      memberCid: userCID,
+      nickname: userNickname,
+      encryptedKey: invite.encryptedKey
+    });
+
+    // Optimistically remove invite
+    setGroupInvites(prev => prev.filter(inv => inv.groupId !== invite.groupId));
+  }, [socketConnected, userCID, userNickname]);
+
+  /**
+   * Reject Group Invite
+   */
+  const rejectGroupInvite = useCallback((groupId) => {
+    setGroupInvites(prev => prev.filter(inv => inv.groupId !== groupId));
   }, []);
 
   /**
-   * Remove member from group
+   * Helper to decrypt a group key if possible
    */
-  const removeMember = useCallback((groupId, memberId) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id === groupId) {
-          return {
-            ...g,
-            memberList: g.memberList.filter((m) => m.id !== memberId),
-            members: g.members - 1,
-          };
+  const tryDecryptGroupKey = useCallback(async (group) => {
+    // Check if we have an encrypted key for ourselves in the members list
+    const me = group.members?.find(m => m.cid === userCID);
+    
+    // If we are the creator and don't have a key, we should have generated it. 
+    // This case usually happens for non-creators who joined via invite.
+    if (!me || !me.encryptedKey) {
+      return group.groupKey || null;
+    }
+
+    if (!group.creatorPublicKey && group.createdBy) {
+      console.log(`[GroupsContext] Missing creatorPublicKey for ${group.name}, fetching from server...`);
+      try {
+        const result = await socketService.searchContact(group.createdBy);
+        if (result && result.otherUser && result.otherUser.publicKey) {
+          group.creatorPublicKey = result.otherUser.publicKey;
+          // Update local state to avoid repeat fetches
+          setGroups(prev => prev.map(g => g.groupId === group.groupId ? { ...g, creatorPublicKey: group.creatorPublicKey } : g));
         }
-        return g;
-      })
-    );
-  }, []);
+      } catch (err) {
+        console.error(`[GroupsContext] Failed to fetch creator public key:`, err);
+      }
+    }
+
+    if (!group.creatorPublicKey) {
+      console.warn(`[GroupsContext] Decryption aborted: No public key for creator of ${group.name}`);
+      return group.groupKey || null;
+    }
+
+    try {
+      console.log(`[GroupsContext] Attempting to decrypt group key for: ${group.name}`);
+      const sharedSecret = await deriveSharedSecret(identityPrivKeyRef.current, group.creatorPublicKey);
+      const decryptedKey = await decryptAESGCM(sharedSecret, me.encryptedKey);
+      
+      setGroups(prev => prev.map(g => g.groupId === group.groupId ? { ...g, groupKey: decryptedKey } : g));
+      console.log('[GroupsContext] Group key successfully decrypted for:', group.groupId);
+      return decryptedKey;
+    } catch (e) {
+      console.error('[GroupsContext] Group key decryption failed:', e);
+      return group.groupKey || null;
+    }
+  }, [userCID, identityPrivKeyRef]);
 
   /**
-   * Approve member request
+   * Decrypt Group Message
    */
-  const approveMemberRequest = useCallback((groupId, requestId, memberData) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id === groupId) {
-          return {
-            ...g,
-            pendingRequests: g.pendingRequests.filter((r) => r.id !== requestId),
-            memberList: [
-              ...g.memberList,
-              {
-                id: requestId,
-                ...memberData,
-                role: 'MEMBER',
-                status: 'offline',
-              },
-            ],
-            members: g.members + 1,
-          };
-        }
-        return g;
-      })
-    );
-  }, []);
+  const decryptGroupMessage = useCallback(async (groupId, encryptedPayload) => {
+    const group = groupsRef.current.find(g => g.groupId === groupId);
+    if (!group) return "[Group Not Found]";
 
-  /**
-   * Reject member request
-   */
-  const rejectMemberRequest = useCallback((groupId, requestId) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id === groupId) {
-          return {
-            ...g,
-            pendingRequests: g.pendingRequests.filter((r) => r.id !== requestId),
-          };
-        }
-        return g;
-      })
-    );
-  }, []);
+    let groupKey = group.groupKey;
 
-  /**
-   * Update member role
-   */
-  const updateMemberRole = useCallback((groupId, memberId, role) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id === groupId) {
-          return {
-            ...g,
-            memberList: g.memberList.map((m) =>
-              m.id === memberId ? { ...m, role } : m
-            ),
-          };
-        }
-        return g;
-      })
-    );
-  }, []);
+    // If we don't have the group key yet, try to decrypt it from the member list
+    if (!groupKey) {
+       groupKey = await tryDecryptGroupKey(group);
+    }
+
+    // RETRY LOGIC: If key still missing, wait briefly and try once more
+    // This handles cases where the message arrives immediately after group creation/joining
+    if (!groupKey) {
+      await new Promise(r => setTimeout(r, 800));
+      const refreshedGroup = groupsRef.current.find(g => g.groupId === groupId);
+      groupKey = refreshedGroup?.groupKey;
+    }
+
+    if (!groupKey) {
+      console.warn(`[GroupsContext] Decryption failed: No key for group ${groupId}`);
+      return "[Key Missing]";
+    }
+
+    try {
+      const decrypted = await decryptAESGCM(fromBase64(groupKey), encryptedPayload);
+      try {
+        // Try parsing as JSON (for media objects)
+        return JSON.parse(decrypted);
+      } catch (e) {
+        // Return as string (for regular text)
+        return decrypted;
+      }
+    } catch (e) {
+      return "[Decryption Failed]";
+    }
+  }, [userCID, identityPrivKeyRef]);
 
   const value = {
     groups,
+    groupInvites,
     selectedGroupId,
     setSelectedGroupId,
     createGroup,
     getGroup,
-    getAllGroups,
-    updateGroup,
-    deleteGroup,
-    addMember,
-    removeMember,
-    approveMemberRequest,
-    rejectMemberRequest,
-    updateMemberRole,
+    decryptGroupMessage,
+    sendGroupInvite,
+    acceptGroupInvite,
+    rejectGroupInvite,
   };
 
   return <GroupsContext.Provider value={value}>{children}</GroupsContext.Provider>;

@@ -7,6 +7,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 
 const MSG_PREFIX = 'losky_msg_';
 const CHAT_LIST_KEY = 'losky_chat_list';
@@ -35,6 +36,38 @@ class MessageStorage {
       if (!message.createdAt) {
         message.createdAt = Date.now();
       }
+
+      // --- OFFLOAD LARGE MEDIA TO FILESYSTEM ---
+      if (message.message && typeof message.message === 'object') {
+        const msgData = message.message;
+        const uri = msgData.uri || msgData.image;
+        
+        if (uri && uri.startsWith('data:')) {
+          try {
+            const extension = msgData.type === 'video' ? 'mp4' : (msgData.type === 'voice' ? 'm4a' : 'jpg');
+            const fileName = `media_${message.id}.${extension}`;
+            const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+            
+            // Extract base64 data (strip prefix)
+            const base64Data = uri.split(',')[1] || uri;
+            
+            await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            
+            // Update message to point to file instead of base64
+            if (msgData.uri) msgData.uri = fileUri;
+            if (msgData.image) msgData.image = fileUri;
+            msgData.isStoredInFile = true;
+            msgData.localFileUri = fileUri;
+            
+            console.log(`[MessageStorage] Media offloaded to file: ${fileName}`);
+          } catch (fsError) {
+            console.error('[MessageStorage] Failed to offload media to filesystem:', fsError);
+            // Fallback: Continue with base64 if it might fit, or let AsyncStorage fail
+          }
+        }
+      }
       
       messages.push(message);
       
@@ -44,7 +77,7 @@ class MessageStorage {
       await AsyncStorage.setItem(key, JSON.stringify(limitedMessages));
       
       // Update chat list summary
-      await this._updateChatListSummary(roomId, message);
+      await this._updateChatListSummary(roomId, message, message.groupId);
       
       console.log(`[MessageStorage] Message saved to room ${roomId}`);
     } catch (error) {
@@ -68,7 +101,12 @@ class MessageStorage {
       
       return messages;
     } catch (error) {
-      console.error('[MessageStorage] Error getting messages:', error);
+      if (error.message && error.message.includes('Row too big')) {
+        console.error('[MessageStorage] Row too big error! Wiping corrupted chat storage to recover:', roomId);
+        await this.clearRoomMessages(roomId);
+      } else {
+        console.error('[MessageStorage] Error getting messages:', error);
+      }
       return [];
     }
   }
@@ -118,12 +156,15 @@ class MessageStorage {
   /**
    * Internal: Update the summary of the last message in a chat
    */
-  async _updateChatListSummary(roomId, lastMessage) {
+  async _updateChatListSummary(roomId, lastMessage, groupId = null) {
     try {
+      const targetId = groupId || roomId;
+      if (!targetId) return;
+
       const stored = await AsyncStorage.getItem(CHAT_LIST_KEY);
       let chatList = stored ? JSON.parse(stored) : [];
       
-      const index = chatList.findIndex(c => c.roomId === roomId);
+      const index = chatList.findIndex(c => (groupId ? c.groupId === groupId : c.roomId === roomId));
       const msgData = lastMessage.message;
       let summaryText = "Media";
       
@@ -136,7 +177,8 @@ class MessageStorage {
       }
 
       const summary = {
-        roomId,
+        roomId: groupId ? null : roomId,
+        groupId: groupId || null,
         lastMessage: summaryText,
         timestamp: lastMessage.timestamp || new Date().toISOString(),
         senderNickname: lastMessage.senderNickname,
@@ -167,6 +209,82 @@ class MessageStorage {
   /**
    * Clear history for a room (Immediate Wipe)
    */
+  async clearRoomMessages(roomId) {
+    try {
+      if (!roomId) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      
+      if (existingStr) {
+        const messages = JSON.parse(existingStr);
+        // Delete all associated files
+        for (const m of messages) {
+          if (m.message && typeof m.message === 'object' && m.message.localFileUri) {
+            try {
+              await FileSystem.deleteAsync(m.message.localFileUri, { idempotent: true });
+            } catch (e) {
+              console.warn('[MessageStorage] Failed to delete file during room clear:', e);
+            }
+          }
+        }
+      }
+
+      await AsyncStorage.removeItem(key);
+      
+      // Update chat list to show no messages
+      const stored = await AsyncStorage.getItem(CHAT_LIST_KEY);
+      let chatList = stored ? JSON.parse(stored) : [];
+      chatList = chatList.filter(c => c.roomId !== roomId);
+      await AsyncStorage.setItem(CHAT_LIST_KEY, JSON.stringify(chatList));
+      
+      console.log(`[MessageStorage] History and files cleared for room ${roomId}`);
+    } catch (error) {
+      console.error('[MessageStorage] Error clearing room messages:', error);
+    }
+  }
+
+  /**
+   * Clear ONLY media from a room to save space
+   */
+  async clearRoomMedia(roomId) {
+    try {
+      if (!roomId) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      if (!existingStr) return;
+
+      let messages = JSON.parse(existingStr);
+      let deletedCount = 0;
+
+      for (const m of messages) {
+        if (m.message && typeof m.message === 'object') {
+          // Delete file if exists
+          if (m.message.localFileUri) {
+            try {
+              await FileSystem.deleteAsync(m.message.localFileUri, { idempotent: true });
+            } catch (e) {}
+          }
+          // Remove media content from the message object
+          if (['image', 'video', 'voice', 'file'].includes(m.message.type) || m.isViewOnce) {
+            m.message.uri = null;
+            m.message.image = null;
+            m.message.text = "[Media Deleted]";
+            m.message.isMediaDeleted = true;
+            deletedCount++;
+          }
+        }
+      }
+
+      if (deletedCount > 0) {
+        await AsyncStorage.setItem(key, JSON.stringify(messages));
+        console.log(`[MessageStorage] Purged ${deletedCount} media items from room ${roomId}`);
+      }
+      return deletedCount;
+    } catch (error) {
+      console.error('[MessageStorage] Error clearing room media:', error);
+      return 0;
+    }
+  }
 
 
   /**
@@ -184,6 +302,23 @@ class MessageStorage {
       messages = messages.filter(m => m.id !== messageId);
       
       if (messages.length !== initialLength) {
+        // Find the message(s) that were filtered out and cleanup their local files
+        const deletedMsgs = initialLength - messages.length;
+        const originalMessages = JSON.parse(existingStr);
+        const deletedItemIds = originalMessages.filter(m => !messages.some(nm => nm.id === m.id)).map(m => m.id);
+        
+        for (const id of deletedItemIds) {
+           const item = originalMessages.find(m => m.id === id);
+           if (item && item.message && typeof item.message === 'object' && item.message.localFileUri) {
+             try {
+               await FileSystem.deleteAsync(item.message.localFileUri, { idempotent: true });
+               console.log(`[MessageStorage] Deleted file for message ${id}`);
+             } catch (e) {
+               console.warn('[MessageStorage] File cleanup failed during individual delete:', e);
+             }
+           }
+        }
+
         await AsyncStorage.setItem(key, JSON.stringify(messages));
         
         // If the deleted message was the last one, update the chat summary
@@ -267,8 +402,32 @@ class MessageStorage {
       });
       
       if (updated) {
-        await AsyncStorage.setItem(key, JSON.stringify(messages));
-        console.log(`[MessageStorage] Message ${messageId} marked as opened in room ${roomId}`);
+        // Find the message we just updated to see if it has a file to delete
+        const openedMsg = messages.find(m => m.id === messageId);
+        if (openedMsg && openedMsg.message && openedMsg.message.isStoredInFile && openedMsg.message.localFileUri) {
+          try {
+            await FileSystem.deleteAsync(openedMsg.message.localFileUri, { idempotent: true });
+            console.log(`[MessageStorage] Deleted view-once file: ${openedMsg.message.localFileUri}`);
+          } catch (e) {
+            console.warn('[MessageStorage] Failed to delete view-once file:', e);
+          }
+          // Remove the URI reference even from the stored object
+          openedMsg.message.localFileUri = null;
+          openedMsg.message.uri = null;
+          openedMsg.message.image = null;
+        }
+
+        try {
+          await AsyncStorage.setItem(key, JSON.stringify(messages));
+          console.log(`[MessageStorage] Message ${messageId} marked as opened in room ${roomId}`);
+        } catch (itemError) {
+          if (itemError.message && itemError.message.includes('Row too big')) {
+            console.error('[MessageStorage] Failed to save opened status - history still too large. Purging.');
+            await this.clearRoomMessages(roomId);
+          } else {
+            throw itemError;
+          }
+        }
       }
     } catch (error) {
       console.error('[MessageStorage] Error marking message as opened:', error);

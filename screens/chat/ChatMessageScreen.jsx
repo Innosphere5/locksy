@@ -390,7 +390,7 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
                   },
                 ]}
               >
-                {msg.isOpened ? 'Opened' : `View Once · ${msg.originalType === 'video' ? 'Video' : (msg.originalType === 'file' ? 'File' : 'Photo')}`}
+                {msg.isOpened ? 'Opened' : `View Once · ${msg.originalType === 'video' ? 'Video' : (msg.originalType === 'file' ? 'File' : (msg.originalType === 'voice' ? 'Voice' : (msg.originalType === 'text' ? 'Message' : 'Photo')))}`}
               </Text>
             </TouchableOpacity>
           ) : msg.type === 'video' ? (
@@ -1150,7 +1150,8 @@ export default function ChatMessageScreen({ navigation, route }) {
               image: null,
               videoUri: null,
               fileUri: null,
-              voiceUri: null
+              voiceUri: null,
+              text: null // Clear text too for view-once text
             };
           }
           return m;
@@ -1187,39 +1188,37 @@ export default function ChatMessageScreen({ navigation, route }) {
     const isViewOnce = isMedia && (msgData.type === 'view-once' || msgData.isViewOnce);
 
     // If it's view-once, the content type is inside the object
-    const actualType = isViewOnce ? (msgData.originalType || 'photo') : (isImage ? 'image' : (isVoice ? 'voice' : (isVideo ? 'video' : (isFile ? 'file' : 'text'))));
+    // Normalizing 'photo' -> 'image' for internal consistency
+    let actualType = isViewOnce ? (msgData.originalType || 'image') : (isImage ? 'image' : (isVoice ? 'voice' : (isVideo ? 'video' : (isFile ? 'file' : 'text'))));
+    if (actualType === 'photo') actualType = 'image';
+
+    const isOpened = message.isOpened || (isMedia && msgData.isOpened);
 
     return {
       id: message.id,
       sender: isSent ? 'sent' : 'received',
-      text: (isImage || isFile || isVoice || isVideo || isViewOnce) ? '' : (typeof msgData === 'object' ? msgData.text : msgData),
-      image: isImage || (isViewOnce && actualType === 'photo') ? msgData.uri || msgData.image : null,
-      fileUri: isFile || (isViewOnce && actualType === 'file') ? msgData.uri : null,
+      text: (isViewOnce && actualType === 'text') ? (isOpened ? null : (msgData.text || '')) : ( (isImage || isFile || isVoice || isVideo || (isViewOnce && actualType !== 'text')) ? '' : (typeof msgData === 'object' ? msgData.text : msgData)),
+      image: !isOpened && (isImage || (isViewOnce && actualType === 'image')) ? msgData.uri || msgData.image : null,
+      fileUri: !isOpened && (isFile || (isViewOnce && actualType === 'file')) ? msgData.uri : null,
       fileName: isFile || (isViewOnce && actualType === 'file') ? msgData.name : null,
       fileSize: isFile || (isViewOnce && actualType === 'file') ? msgData.size : null,
       mimeType: isFile || (isViewOnce && actualType === 'file') ? msgData.mimeType : null,
-      voiceUri: isVoice || (isViewOnce && actualType === 'voice') ? msgData.uri : null,
+      voiceUri: !isOpened && (isVoice || (isViewOnce && actualType === 'voice')) ? msgData.uri : null,
       duration: isVoice || (isViewOnce && actualType === 'voice') ? msgData.duration : null,
-      videoUri: isVideo || (isViewOnce && actualType === 'video') ? msgData.uri : null,
-      time: new Date(message.timestamp).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-      // ── createdAt is CRITICAL for the cleanup interval ──
-      // Without this, m.createdAt || 0 = 0 in the interval and (now - 0) is always
-      // greater than any timerMs, causing ALL messages to be deleted immediately.
+      videoUri: !isOpened && (isVideo || (isViewOnce && actualType === 'video')) ? msgData.uri : null,
+      time: new Date(message.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       createdAt: message.createdAt ||
         (message.timestamp ? new Date(message.timestamp).getTime() : Date.now()),
       type: isViewOnce ? 'view-once' : actualType,
       originalType: actualType,
       isViewOnce: isViewOnce,
-      isOpened: message.isOpened || (isMedia && msgData.isOpened),
+      isOpened: isOpened,
       reactions: message.reactions || [],
       readStatus: isSent ? 'delivered' : undefined,
       isForwarded: false,
       senderCid: message.senderCid,
-      senderNickname: message.senderNickname,
-      avatar: message.senderCid !== userCID ? contactAvatar : userAvatarSafe,
+      senderNickname: message.senderNickname || `User-${message.senderCid?.substring(0, 4) || '?'}`,
+      avatar: message.senderAvatar || (message.senderCid !== userCID ? contactAvatar : userAvatarSafe),
       timerMs: message.timerMs || (isMedia && msgData.timerMs),
       expiresAt: message.expiresAt || (isMedia && msgData.expiresAt) ||
         ((message.timerMs || (isMedia && msgData.timerMs)) ? (Date.now() + (message.timerMs || msgData.timerMs)) : null),
@@ -1395,7 +1394,7 @@ export default function ChatMessageScreen({ navigation, route }) {
         text: messageText,
       };
 
-      socketService.sendMessage(roomId, payload, userNickname);
+      socketService.sendMessage(roomId, payload, userNickname, userAvatarSafe);
     } catch (error) {
       console.error("[ChatMessage] Error sending message:", error);
     }
@@ -1435,11 +1434,41 @@ export default function ChatMessageScreen({ navigation, route }) {
   };
 
   // Handle media attachment selection
+  const handleClearRoomMedia = async () => {
+    Alert.alert(
+      "Clear Room Media",
+      "Are you sure you want to permanently delete all images, videos, and voice notes in this chat? This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Clear Media", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const deletedCount = await messageStorage.clearRoomMedia(roomId);
+              if (deletedCount > 0) {
+                // Refresh messages from storage to reflect the "[Media Deleted]" state
+                const refreshed = await messageStorage.getMessages(roomId);
+                setMessages(refreshed.map(m => formatSocketMsg(m)));
+                alert(`Purged ${deletedCount} media items.`);
+              } else {
+                alert("No media items found to clear.");
+              }
+            } catch (error) {
+              console.error("[ChatMessage] Error clearing media:", error);
+              alert("Failed to clear media.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const handleMediaAttach = async (mediaInfo) => {
     console.log('Media selected:', mediaInfo);
     const isViewOnce = mediaInfo.isViewOnce;
 
-    if (mediaInfo.type === 'photo') {
+    if (mediaInfo.type === 'image') {
       try {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (permissionResult.granted === false) {
@@ -1526,7 +1555,7 @@ export default function ChatMessageScreen({ navigation, route }) {
           isViewOnce: isViewOnce,
           uri: videoPayload,
           text: isViewOnce ? 'Sent a view-once video' : 'Sent a video',
-        }, userNickname);
+        }, userNickname, userAvatarSafe);
         if (!isViewOnce) {
           saveToVault({
             id: vaultId,
@@ -1592,7 +1621,7 @@ export default function ChatMessageScreen({ navigation, route }) {
           size: asset.size,
           mimeType: asset.mimeType,
           text: isViewOnce ? `Sent a view-once file: ${asset.name}` : `Sent a file: ${asset.name}`,
-        }, userNickname);
+        }, userNickname, userAvatarSafe);
 
         // ── Save to Vault (non-view-once only) ────────────────────
         if (!isViewOnce) {
@@ -1666,7 +1695,7 @@ export default function ChatMessageScreen({ navigation, route }) {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       createdAt: Date.now(), // CRITICAL for cleanup interval
       type: isViewOnce ? 'view-once' : 'image',
-      originalType: 'photo',
+      originalType: 'image',
       isViewOnce: isViewOnce,
       readStatus: 'sending',
       avatar: userAvatarSafe,
@@ -1677,12 +1706,12 @@ export default function ChatMessageScreen({ navigation, route }) {
 
     try {
       socketService.sendMessage(roomId, {
-        type: isViewOnce ? 'view-once' : 'image',
-        originalType: 'photo',
-        isViewOnce: isViewOnce,
-        uri: base64Data,
-        text: isViewOnce ? 'Sent a view-once photo' : 'Sent a photo',
-      }, userNickname);
+      type: isViewOnce ? 'view-once' : 'image',
+      originalType: 'image',
+      isViewOnce: isViewOnce,
+      uri: base64Data,
+      text: isViewOnce ? 'Sent a view-once photo' : 'Sent a photo',
+    }, userNickname, userAvatarSafe);
 
       // ── Save to Vault (non-view-once only) ────────────────────
       if (!isViewOnce) {
@@ -1750,6 +1779,8 @@ export default function ChatMessageScreen({ navigation, route }) {
   // --- VIEW ONCE LOGIC ---
   const handleOpenViewOnce = (msg) => {
     if (msg.isOpened) return;
+    console.log('[ViewOnce] Opening message:', msg.id, 'Type:', msg.originalType);
+    console.log('[ViewOnce] Media URI:', msg.image || msg.videoUri || msg.voiceUri || msg.fileUri || 'NONE');
     setViewOncePreviewMsg(msg);
     setShowViewOncePreview(true);
   };
@@ -1834,7 +1865,7 @@ export default function ChatMessageScreen({ navigation, route }) {
         uri: payloadUri,
         duration: finalDuration,
         text: isViewOnce ? 'Sent a view-once voice message' : 'Sent a voice message',
-      }, userNickname);
+      }, userNickname, userAvatarSafe);
 
       // ── Save voice to Vault ───────────────────────────────────
       const vaultId = 'vault-voice-' + Date.now();
@@ -1981,6 +2012,14 @@ export default function ChatMessageScreen({ navigation, route }) {
                 <Text style={{ fontSize: headerIconFontSize }}>📹</Text>
               </TouchableOpacity>
 
+              <TouchableOpacity
+                style={styles.headerIconBtn}
+                activeOpacity={0.6}
+                onPress={handleClearRoomMedia}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={{ fontSize: headerIconFontSize }}>🧹</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -2249,20 +2288,24 @@ export default function ChatMessageScreen({ navigation, route }) {
               </View>
 
               <View style={styles.viewOnceContent}>
-                {viewOncePreviewMsg?.originalType === 'photo' && (
+                {(viewOncePreviewMsg?.originalType === 'image' || viewOncePreviewMsg?.originalType === 'photo' || viewOncePreviewMsg?.image) && (
                   <Image
                     source={{ uri: viewOncePreviewMsg.image }}
                     style={styles.fullImage}
                     resizeMode="contain"
+                    onLoad={() => console.log('[ViewOnce] Image loaded successfully')}
+                    onError={(e) => console.error('[ViewOnce] Image load error:', e.nativeEvent.error)}
                   />
                 )}
                 {viewOncePreviewMsg?.originalType === 'video' && (
                   <Video
                     source={{ uri: viewOncePreviewMsg.videoUri }}
-                    style={styles.fullImage}
+                    style={styles.fullVideo}
                     useNativeControls
-                    resizeMode={ResizeMode.CONTAIN}
+                    resizeMode="contain"
                     shouldPlay
+                    onError={(e) => console.error('[ViewOnce] Video playback error:', e)}
+                    onLoad={() => console.log('[ViewOnce] Video loaded successfully')}
                   />
                 )}
                 {viewOncePreviewMsg?.originalType === 'file' && (

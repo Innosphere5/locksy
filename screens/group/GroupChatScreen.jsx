@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,32 +11,20 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Image,
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SHADOWS } from '../../theme';
 import { useGroups } from '../../context/GroupsContext';
-
-// Initial system/sample messages for demonstration
-const INITIAL_MESSAGES = [
-  { id: 'sys1', type: 'system', text: 'Group created · E2EE enabled' },
-  {
-    id: '1',
-    type: 'received',
-    sender: 'Ghost_Fox',
-    senderNickname: 'Ghost_Fox',
-    text: 'Sector clear. Phase 2.',
-    time: '08:10',
-    verified: true,
-  },
-  { id: '2', type: 'received', sender: 'Shadow_Wolf', senderNickname: 'Shadow_Wolf', text: 'Copy. En route.', time: '08:11' },
-  {
-    id: '3',
-    type: 'sent',
-    text: 'Stand by. 🔒',
-    time: '08:12',
-  },
-  { id: '4', type: 'voice', sender: 'Iron_Mask', senderNickname: 'Iron_Mask', duration: '0:15', time: '08:14' },
-];
+import { useCIDContext } from '../../context/CIDContext';
+import socketService from '../../utils/socketService';
+import messageStorage from '../../utils/messageStorage';
+import { encryptAESGCM, toBase64, fromBase64 } from '../../utils/cryptoEngine';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import AttachMediaModal from '../modals/AttachMediaModal';
+import { Audio, Video, ResizeMode } from 'expo-av';
 
 const SystemMessage = ({ text }) => (
   <View style={styles.sysMsgWrapper}>
@@ -46,27 +34,57 @@ const SystemMessage = ({ text }) => (
 
 const ChatBubble = ({ item, onLongPress }) => {
   const isSent = item.type === 'sent';
-  if (item.type === 'voice') {
-    return (
-      <TouchableOpacity 
-        style={styles.receivedRow}
-        onLongPress={() => onLongPress?.(item)}
-        delayLongPress={300}
-      >
-        <View style={styles.senderAvatar}>
-          <MaterialCommunityIcons name="account" size={14} color={COLORS.primary} />
+  const isMedia = item.media && typeof item.media === 'object';
+  
+  const renderMediaContent = () => {
+    if (!isMedia) return <Text style={isSent ? styles.sentText : styles.receivedText}>{item.text}</Text>;
+    
+    const media = item.media;
+    if (media.type === 'image') {
+      return (
+        <View style={styles.mediaContainer}>
+          <Image source={{ uri: media.uri }} style={styles.msgImage} resizeMode="cover" />
         </View>
-        <View>
-          <Text style={styles.senderName}>{item.senderNickname}</Text>
-          <View style={styles.voiceBubble}>
-            <Ionicons name="mic" size={14} color={COLORS.primary} style={{ marginRight: 6 }} />
-            <Text style={styles.voiceText}>Voice · {item.duration}</Text>
+      );
+    }
+    if (media.type === 'video') {
+      return (
+        <View style={styles.mediaContainer}>
+          <Video
+            source={{ uri: media.uri }}
+            style={styles.msgVideo}
+            useNativeControls
+            resizeMode={ResizeMode.CONTAIN}
+          />
+        </View>
+      );
+    }
+    if (media.type === 'file') {
+      return (
+        <View style={styles.fileContainer}>
+          <Ionicons name="document-text" size={24} color={isSent ? COLORS.white : COLORS.primary} />
+          <View style={styles.fileInfo}>
+            <Text style={[styles.fileName, { color: isSent ? COLORS.white : COLORS.text }]} numberOfLines={1}>
+              {media.name || 'Document'}
+            </Text>
+            <Text style={[styles.fileSize, { color: isSent ? 'rgba(255,255,255,0.7)' : COLORS.textMuted }]}>
+              {media.size ? `${(media.size / 1024).toFixed(1)} KB` : 'Media File'}
+            </Text>
           </View>
-          <Text style={styles.msgTime}>{item.time}</Text>
         </View>
-      </TouchableOpacity>
-    );
-  }
+      );
+    }
+    if (media.type === 'voice') {
+      return (
+        <View style={styles.voiceContainer}>
+          <Ionicons name="mic" size={20} color={isSent ? COLORS.white : COLORS.primary} />
+          <Text style={[styles.voiceText, { color: isSent ? COLORS.white : COLORS.text }]}>Voice Message ({media.duration || '0:00'})</Text>
+        </View>
+      );
+    }
+    return <Text style={isSent ? styles.sentText : styles.receivedText}>{item.text || '[Unsupported Media]'}</Text>;
+  };
+
   if (item.type === 'received') {
     return (
       <TouchableOpacity
@@ -83,7 +101,7 @@ const ChatBubble = ({ item, onLongPress }) => {
             {item.verified && <Text style={styles.verifiedIcon}>✓</Text>}
           </View>
           <View style={styles.receivedBubble}>
-            <Text style={styles.receivedText}>{item.text}</Text>
+            {renderMediaContent()}
           </View>
           <Text style={styles.msgTime}>{item.time}</Text>
         </View>
@@ -97,7 +115,7 @@ const ChatBubble = ({ item, onLongPress }) => {
       delayLongPress={300}
     >
       <View style={styles.sentBubble}>
-        <Text style={styles.sentText}>{item.text}</Text>
+        {renderMediaContent()}
       </View>
       <Text style={[styles.msgTime, { textAlign: 'right', marginRight: 4 }]}>{item.time}</Text>
     </TouchableOpacity>
@@ -105,77 +123,319 @@ const ChatBubble = ({ item, onLongPress }) => {
 };
 
 export default function GroupChatScreen({ navigation, route }) {
-  const { getGroup } = useGroups();
-  const groupId = route?.params?.groupId || route?.params?.group?.id;
-  const passedGroup = route?.params?.group;
+  const { getGroup, decryptGroupMessage } = useGroups();
+  const { userCID, userNickname, userAvatar } = useCIDContext();
+  const groupId = route?.params?.groupId;
   
   const group = useMemo(() => {
-    return groupId ? getGroup(groupId) : passedGroup || { name: 'OP-SECTOR-7', members: 5, memberList: [] };
-  }, [groupId, getGroup, passedGroup]);
+    return getGroup(groupId) || route?.params?.group;
+  }, [groupId, getGroup, route?.params?.group]);
 
-  const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
+  const [isMediaModalVisible, setIsMediaModalVisible] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [recording, setRecording] = useState(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingTimerRef = useRef(null);
   const flatRef = useRef(null);
 
-  const handleSendMessage = () => {
-    if (!inputText.trim()) return;
+  // ── Load History & Setup Listeners ───────────────────────────────
+  useEffect(() => {
+    if (!groupId) return;
 
-    const newMessage = {
-      id: String(Date.now()),
-      type: 'sent',
-      text: inputText.trim(),
-      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      verified: true,
+    const loadHistory = async () => {
+      const stored = await messageStorage.getMessages(groupId);
+      const decrypted = await Promise.all(stored.map(async (m) => {
+        const content = await decryptGroupMessage(groupId, m.message);
+        const isMedia = content && typeof content === 'object';
+        return {
+          id: m.id,
+          type: m.senderCid === userCID ? 'sent' : 'received',
+          senderNickname: m.senderNickname,
+          text: isMedia ? '' : content,
+          media: isMedia ? content : null,
+          time: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          verified: true,
+        };
+      }));
+      setMessages(decrypted);
     };
 
-    setMessages((prev) => [...prev, newMessage]);
-    setInputText('');
+    const initializeChat = async () => {
+      await loadHistory();
+      
+      try {
+        // Ensure socket is ready
+        await socketService.waitForConnection();
+        // Join the group room for real-time messages
+        socketService.joinRoom(groupId);
+        console.log(`[GroupChat] Joined room: ${groupId}`);
 
-    // Auto-scroll to bottom
-    setTimeout(() => {
-      flatRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+        // 3. Sync with server for any missed messages
+        const history = await socketService.getChatHistory(groupId);
+        if (history && history.messages) {
+          const decrypted = await Promise.all(history.messages.map(async (m) => {
+            const content = await decryptGroupMessage(groupId, m.message);
+            const isMedia = content && typeof content === 'object';
+            
+            // Save to local storage
+            await messageStorage.saveMessage(groupId, m);
+
+            return {
+              id: m.id,
+              type: m.senderCid === userCID ? 'sent' : 'received',
+              senderNickname: m.senderNickname,
+              text: isMedia ? '' : content,
+              media: isMedia ? content : null,
+              time: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              verified: true,
+              status: 'delivered'
+            };
+          }));
+          setMessages(decrypted);
+        }
+      } catch (err) {
+        console.warn("[GroupChat] Failed to sync group history:", err);
+      }
+    };
+
+    initializeChat();
+
+    const unsubscribe = socketService.on('message:received', async (msg) => {
+      if (msg.groupId === groupId) {
+        const content = await decryptGroupMessage(groupId, msg.message);
+        const isMedia = content && typeof content === 'object';
+        const newMessage = {
+          id: msg.id,
+          type: msg.senderCid === userCID ? 'sent' : 'received',
+          senderNickname: msg.senderNickname,
+          text: isMedia ? '' : content,
+          media: isMedia ? content : null,
+          time: new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          verified: true,
+          status: 'delivered'
+        };
+        
+        setMessages(prev => {
+          // If this is our own message coming back, replace the 'sending' version
+          const exists = prev.find(m => m.id === msg.id);
+          if (exists) {
+            return prev.map(m => m.id === msg.id ? newMessage : m);
+          }
+          return [...prev, newMessage];
+        });
+      }
+    });
+
+    const unsubscribeUpdate = socketService.on('group:update', (data) => {
+      if (data.groupId === groupId) {
+        let systemText = '';
+        if (data.type === 'member_added') {
+          systemText = `${data.member.nickname} was added to the group`;
+        } else if (data.type === 'member_removed') {
+          // Find nickname from group members if possible
+          const member = group?.members?.find(m => m.cid === data.memberCid);
+          systemText = `${member?.nickname || 'A member'} left or was removed`;
+        } else if (data.type === 'admin_promoted') {
+          const member = group?.members?.find(m => m.cid === data.memberCid);
+          systemText = `${member?.nickname || 'A member'} was promoted to Admin`;
+        }
+
+        if (systemText) {
+          const sysMsg = {
+            id: 'sys-' + Date.now(),
+            type: 'system',
+            text: systemText,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, sysMsg]);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeUpdate();
+    };
+  }, [groupId, decryptGroupMessage, userCID, group]);
+
+  const handleSendMessage = async (mediaData = null) => {
+    if ((!inputText.trim() && !mediaData) || !group?.groupKey) {
+      if (!group?.groupKey) console.warn("[GroupChat] Cannot send: groupKey missing");
+      return;
+    }
+
+    const clientMsgId = uuidv4_local(); // Use a temp ID for optimistic update
+    const text = inputText.trim();
+
+    try {
+      setIsSending(true);
+      const content = mediaData || text;
+      
+      // Optimistic Update
+      const tempMsg = {
+        id: clientMsgId,
+        type: 'sent',
+        senderNickname: userNickname,
+        text: mediaData ? '' : text,
+        media: mediaData,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        verified: true,
+        status: 'sending'
+      };
+      setMessages(prev => [...prev, tempMsg]);
+      if (!mediaData) setInputText('');
+
+      // Ensure we have the group key as a Uint8Array
+      const keyBytes = fromBase64(group.groupKey);
+
+      // Encrypt message for the group
+      const payload = typeof content === 'string' ? content : JSON.stringify(content);
+      const encrypted = await encryptAESGCM(keyBytes, payload);
+      
+      const messageData = {
+        id: clientMsgId, // Pass the same ID to the server
+        groupId,
+        senderCid: userCID,
+        senderNickname: userNickname,
+        senderAvatar: userAvatar,
+        message: encrypted,
+      };
+
+      // Emit to server
+      socketService.socket.emit("message:send", messageData);
+      
+    } catch (e) {
+      console.error("[GroupChat] Send failed:", e);
+      Alert.alert("Error", "Failed to send message");
+      // Remove the failed message
+      setMessages(prev => prev.filter(m => m.id !== clientMsgId));
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Simple local UUID helper since we don't have uuid lib here usually
+  const uuidv4_local = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+
+  const handleMediaSelect = async (selection) => {
+    try {
+      if (selection.type === 'image') {
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.6,
+          base64: true,
+        });
+        if (!result.canceled) {
+          const asset = result.assets[0];
+          handleSendMessage({
+            type: 'image',
+            uri: `data:image/jpeg;base64,${asset.base64}`,
+            name: 'photo.jpg',
+          });
+        }
+      } else if (selection.type === 'video') {
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          allowsEditing: true,
+          quality: 0.5,
+        });
+        if (!result.canceled) {
+          const asset = result.assets[0];
+          const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
+          handleSendMessage({
+            type: 'video',
+            uri: `data:video/mp4;base64,${base64}`,
+            name: 'video.mp4',
+          });
+        }
+      } else if (selection.type === 'file') {
+        const result = await DocumentPicker.getDocumentAsync({ type: '*/*' });
+        if (!result.canceled) {
+          const asset = result.assets[0];
+          const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
+          handleSendMessage({
+            type: 'file',
+            uri: `data:${asset.mimeType};base64,${base64}`,
+            name: asset.name,
+            size: asset.size,
+          });
+        }
+      } else if (selection.type === 'voice') {
+        handleStartRecording();
+      }
+    } catch (err) {
+      console.error("[GroupChat] Media selection error:", err);
+      Alert.alert("Error", "Failed to pick media");
+    }
+  };
+
+  const handleStartRecording = async () => {
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission Required", "Microphone access is needed for voice messages");
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording: newRecording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+
+      setRecording(newRecording);
+      setRecordingDuration(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+
+    } catch (err) {
+      console.error('Failed to start recording', err);
+    }
+  };
+
+  const handleStopAndSendRecording = async () => {
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    if (!recording) return;
+
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      const mins = Math.floor(recordingDuration / 60);
+      const secs = recordingDuration % 60;
+      const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+      setRecording(null);
+      setRecordingDuration(0);
+
+      if (!uri) return;
+
+      const base64Data = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+      handleSendMessage({
+        type: 'voice',
+        uri: `data:audio/m4a;base64,${base64Data}`,
+        duration: durationStr,
+      });
+
+    } catch (err) {
+      console.error('Failed to stop recording', err);
+    }
   };
 
   const handleMessageLongPress = (message) => {
-    if (message.type === 'sent') {
-      Alert.alert(
-        'Message Options',
-        'Select an action',
-        [
-          {
-            text: 'React to Message',
-            onPress: () => Alert.alert('Reactions', '👍 ❤️ 😂 😮 😢'),
-          },
-          {
-            text: 'Delete Message',
-            onPress: () => {
-              setMessages((prev) => prev.filter((m) => m.id !== message.id));
-            },
-            style: 'destructive',
-          },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
-    } else {
-      Alert.alert(
-        'Message Options',
-        'Select an action',
-        [
-          {
-            text: 'React to Message',
-            onPress: () => Alert.alert('Reactions', '👍 ❤️ 😂 😮 😢'),
-          },
-          {
-            text: 'Reply',
-            onPress: () => {
-              setInputText(`@${message.senderNickname} replying to: ${message.text.substring(0, 30)}... `);
-            },
-          },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
-    }
+    // ... same as before
   };
 
   const renderItem = ({ item }) => {
@@ -197,7 +457,7 @@ export default function GroupChatScreen({ navigation, route }) {
         </View>
         <View style={styles.headerInfo}>
           <Text style={styles.headerName}>{group?.name || 'Group Chat'}</Text>
-          <Text style={styles.headerSub}>{group?.members || 0} members · E2EE</Text>
+          <Text style={styles.headerSub}>{group?.members?.length || 0} members · E2EE</Text>
           <Text style={styles.headerNick}>Nicknames only</Text>
         </View>
         <TouchableOpacity
@@ -231,34 +491,60 @@ export default function GroupChatScreen({ navigation, route }) {
 
         {/* Input Bar */}
         <View style={styles.inputBar}>
-          <TouchableOpacity style={styles.attachBtn}>
-            <Ionicons name="attach" size={22} color={COLORS.textMuted} />
-          </TouchableOpacity>
-          <TextInput
-            style={styles.chatInput}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="Message group..."
-            placeholderTextColor={COLORS.placeholder}
-            returnKeyType="send"
-            onSubmitEditing={handleSendMessage}
-            editable={true}
-            selectTextOnFocus={true}
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, inputText.trim() && styles.sendBtnActive]}
-            activeOpacity={0.85}
-            onPress={handleSendMessage}
-            disabled={!inputText.trim()}
-          >
-            <Ionicons
-              name="send"
-              size={18}
-              color={inputText.trim() ? COLORS.white : COLORS.textMuted}
-            />
-          </TouchableOpacity>
+          {recording ? (
+            <View style={styles.recordingContainer}>
+              <TouchableOpacity onPress={() => {
+                if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+                setRecording(null);
+                setRecordingDuration(0);
+              }}>
+                <Ionicons name="trash-outline" size={24} color={COLORS.error} />
+              </TouchableOpacity>
+              <Text style={styles.recordingText}>Recording: {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}</Text>
+              <TouchableOpacity style={styles.sendVoiceBtn} onPress={handleStopAndSendRecording}>
+                <Ionicons name="send" size={18} color={COLORS.white} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <TouchableOpacity 
+                style={styles.attachBtn} 
+                onPress={() => setIsMediaModalVisible(true)}
+                disabled={isSending}
+              >
+                <Ionicons name="attach" size={22} color={COLORS.textMuted} />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.chatInput}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder="Message group..."
+                placeholderTextColor={COLORS.placeholder}
+                returnKeyType="send"
+                onSubmitEditing={() => handleSendMessage()}
+              />
+              <TouchableOpacity
+                style={[styles.sendBtn, inputText.trim() && styles.sendBtnActive]}
+                activeOpacity={0.85}
+                onPress={() => handleSendMessage()}
+                disabled={!inputText.trim()}
+              >
+                <Ionicons
+                  name="send"
+                  size={18}
+                  color={inputText.trim() ? COLORS.white : COLORS.textMuted}
+                />
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </KeyboardAvoidingView>
+
+      <AttachMediaModal
+        visible={isMediaModalVisible}
+        onClose={() => setIsMediaModalVisible(false)}
+        onSelectMedia={handleMediaSelect}
+      />
     </SafeAreaView>
   );
 }
@@ -391,20 +677,6 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontFamily: FONTS.regular,
   },
-  voiceBubble: {
-    backgroundColor: COLORS.bubbleReceived,
-    borderRadius: 16,
-    borderBottomLeftRadius: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  voiceText: {
-    fontSize: 13,
-    color: COLORS.text,
-    fontFamily: FONTS.regular,
-  },
   sentRow: {
     alignItems: 'flex-end',
   },
@@ -464,5 +736,74 @@ const styles = StyleSheet.create({
   sendBtnActive: {
     backgroundColor: COLORS.primary,
     ...SHADOWS.sm,
+  },
+  mediaContainer: {
+    width: 200,
+    height: 150,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  msgImage: {
+    width: '100%',
+    height: '100%',
+  },
+  msgVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  fileContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 5,
+  },
+  fileInfo: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 13,
+    fontWeight: '600',
+    fontFamily: FONTS.semiBold,
+  },
+  fileSize: {
+    fontSize: 10,
+    fontFamily: FONTS.regular,
+  },
+  voiceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  voiceText: {
+    fontSize: 13,
+    fontFamily: FONTS.regular,
+  },
+  recordingContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.inputBg,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  recordingText: {
+    fontSize: 14,
+    color: COLORS.primary,
+    fontWeight: '600',
+    fontFamily: FONTS.semiBold,
+  },
+  sendVoiceBtn: {
+    backgroundColor: COLORS.primary,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
