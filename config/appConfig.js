@@ -1,8 +1,9 @@
 // appConfig.js — FIXED VERSION
 
-const SERVER_IP = "192.168.31.172"; // your PC IP
-const SOCKET_PORT = 5000;
+const SERVER_IP = "10.99.91.201"; // your PC IP
+const SOCKET_PORT = 5050;
 const API_PORT = 3000;
+const MEDIA_PORT = 5050;
 
 const DEV = true; // change later for production
 const DOMAIN = "locksy.info";
@@ -14,9 +15,14 @@ const AppConfig = {
     PATH: "/socket.io/",
   },
 
-  // ── API Backend (Next.js) ─────────────────────
+  // ── API Backend (Next.js - Auth, etc.) ─────────
   API: {
     BASE_URL: DEV ? `http://${SERVER_IP}:${API_PORT}/api/` : `https://${DOMAIN}/api/`,
+  },
+
+  // ── Media Server (S3 Uploads) ──────────────────
+  MEDIA: {
+    BASE_URL: DEV ? `http://${SERVER_IP}:${MEDIA_PORT}` : `https://${DOMAIN}`,
   },
 
   // ── Debug ─────────────────────────────────────

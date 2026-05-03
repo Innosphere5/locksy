@@ -35,6 +35,7 @@ import messageStorage from '../../utils/messageStorage';
 import vaultStorage from '../../utils/vaultStorage';
 import { useCIDContext } from '../../context/CIDContext';
 import { setChatLock, clearChatLock, getChatLockStatus } from '../../utils/secureStorage';
+import mediaService from '../../src/services/mediaService';
 
 // ============================================================================
 // RESPONSIVE UTILITY FUNCTIONS
@@ -865,7 +866,7 @@ function ChatLockModal({ visible, onClose, contactName, contactCid, currentPassw
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.premiumBackdrop}>
         <Animated.View style={[
-          styles.premiumModalCard, 
+          styles.premiumModalCard,
           { width: modalWidth, transform: [{ translateX: shake }, { translateY: 0 }] }
         ]}>
           <View style={styles.premiumModalHeader}>
@@ -896,7 +897,7 @@ function ChatLockModal({ visible, onClose, contactName, contactCid, currentPassw
                 <Text style={styles.premiumDesc}>
                   Accessing messages with <Text style={{ fontWeight: '700', color: COLORS.dark }}>{contactName}</Text> requires your private PIN or biometrics.
                 </Text>
-                
+
                 <View style={styles.premiumActions}>
                   <TouchableOpacity style={styles.premiumActionBtn} onPress={() => setStep('enter')}>
                     <Text style={styles.premiumActionText}>Change Password</Text>
@@ -921,7 +922,7 @@ function ChatLockModal({ visible, onClose, contactName, contactCid, currentPassw
                 <Text style={styles.pinPromt}>
                   {step === 'enter' ? 'Create your chat PIN' : 'Confirm your chat PIN'}
                 </Text>
-                
+
                 {renderPinBoxes(step === 'enter' ? pin : confirmPin)}
 
                 <View style={{ marginTop: 20 }}>
@@ -974,6 +975,8 @@ export default function ChatMessageScreen({ navigation, route }) {
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
   const [showAttachMediaModal, setShowAttachMediaModal] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
 
   const [isSending, setIsSending] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
@@ -1197,15 +1200,15 @@ export default function ChatMessageScreen({ navigation, route }) {
     return {
       id: message.id,
       sender: isSent ? 'sent' : 'received',
-      text: (isViewOnce && actualType === 'text') ? (isOpened ? null : (msgData.text || '')) : ( (isImage || isFile || isVoice || isVideo || (isViewOnce && actualType !== 'text')) ? '' : (typeof msgData === 'object' ? msgData.text : msgData)),
-      image: !isOpened && (isImage || (isViewOnce && actualType === 'image')) ? msgData.uri || msgData.image : null,
-      fileUri: !isOpened && (isFile || (isViewOnce && actualType === 'file')) ? msgData.uri : null,
+      text: (isViewOnce && actualType === 'text') ? (isOpened ? null : (msgData.text || '')) : ((isImage || isFile || isVoice || isVideo || (isViewOnce && actualType !== 'text')) ? '' : (typeof msgData === 'object' ? msgData.text : msgData)),
+      image: !isOpened && (isImage || (isViewOnce && actualType === 'image')) ? msgData.uri || msgData.image || msgData.photo : null,
+      fileUri: !isOpened && (isFile || (isViewOnce && actualType === 'file')) ? msgData.uri || msgData.fileUri : null,
       fileName: isFile || (isViewOnce && actualType === 'file') ? msgData.name : null,
       fileSize: isFile || (isViewOnce && actualType === 'file') ? msgData.size : null,
       mimeType: isFile || (isViewOnce && actualType === 'file') ? msgData.mimeType : null,
-      voiceUri: !isOpened && (isVoice || (isViewOnce && actualType === 'voice')) ? msgData.uri : null,
+      voiceUri: !isOpened && (isVoice || (isViewOnce && actualType === 'voice')) ? msgData.uri || msgData.voiceUri : null,
       duration: isVoice || (isViewOnce && actualType === 'voice') ? msgData.duration : null,
-      videoUri: !isOpened && (isVideo || (isViewOnce && actualType === 'video')) ? msgData.uri : null,
+      videoUri: !isOpened && (isVideo || (isViewOnce && actualType === 'video')) ? msgData.uri || msgData.videoUri : null,
       time: new Date(message.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       createdAt: message.createdAt ||
         (message.timestamp ? new Date(message.timestamp).getTime() : Date.now()),
@@ -1364,7 +1367,7 @@ export default function ChatMessageScreen({ navigation, route }) {
 
     const messageText = inputText.trim();
     const isViewOnce = isViewOnceText;
-    
+
     // Add to UI immediately
     const tempMsg = {
       id: "temp-" + Date.now(),
@@ -1440,8 +1443,8 @@ export default function ChatMessageScreen({ navigation, route }) {
       "Are you sure you want to permanently delete all images, videos, and voice notes in this chat? This cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Clear Media", 
+        {
+          text: "Clear Media",
           style: "destructive",
           onPress: async () => {
             try {
@@ -1468,176 +1471,191 @@ export default function ChatMessageScreen({ navigation, route }) {
     console.log('Media selected:', mediaInfo);
     const isViewOnce = mediaInfo.isViewOnce;
 
-    if (mediaInfo.type === 'image') {
-      try {
-        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (permissionResult.granted === false) {
-          alert("Permission to access camera roll is required!");
-          return;
-        }
-        const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          allowsEditing: true,
-          quality: 0.7,
-          base64: true,
-        });
-        if (!result.canceled) {
-          const asset = result.assets[0];
-          handleSendImage(asset.uri, `data:image/jpeg;base64,${asset.base64}`, isViewOnce);
-        }
-      } catch (err) {
-        console.error("[ChatMessage] Image Selection Error:", err);
-      }
-    } else if (mediaInfo.type === 'file') {
-      handleSendFile(isViewOnce);
-    } else if (mediaInfo.type === 'voice') {
-      setIsPendingVoiceViewOnce(isViewOnce);
-      handleStartRecording();
-    } else if (mediaInfo.type === 'voice') {
-      handleStartRecording();
-    } else if (mediaInfo.type === 'video') {
-      handleSendVideo(isViewOnce);
-    } else {
-      const mediaTypeEmojis = {
-        timer: '⏱️',
-      };
-      const emoji = mediaTypeEmojis[mediaInfo.type] || '📎';
-      alert(`✓ Ready to send ${mediaInfo.label}\n${emoji}`);
-    }
-  };
-
-  const handleSendVideo = async (isViewOnce = false) => {
     try {
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permissionResult.granted === false) {
-        alert("Permission to access camera roll is required!");
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-        allowsEditing: true,
-        quality: 0.7,
-      });
-
-      if (!result.canceled) {
-        const asset = result.assets[0];
-
-        // Read video to base64
-        const base64Data = await FileSystem.readAsStringAsync(asset.uri, {
-          encoding: 'base64',
-        });
-
-        if (!roomId) return;
-
-        const videoPayload = `data:video/mp4;base64,${base64Data}`;
-        const vaultId = 'vault-vid-' + Date.now();
-
-        // Add to UI immediately
-        const tempMsg = {
-          id: "temp-video-" + Date.now(),
-          sender: 'sent',
-          text: '',
-          videoUri: asset.uri,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          createdAt: Date.now(), // CRITICAL for cleanup interval
-          type: isViewOnce ? 'view-once' : 'video',
-          originalType: 'video',
-          isViewOnce: isViewOnce,
-          readStatus: 'sending',
-          avatar: userAvatarSafe,
-        };
-
-        setMessages(prev => [...prev, tempMsg]);
-        socketService.sendMessage(roomId, {
-          type: isViewOnce ? 'view-once' : 'video',
-          originalType: 'video',
-          isViewOnce: isViewOnce,
-          uri: videoPayload,
-          text: isViewOnce ? 'Sent a view-once video' : 'Sent a video',
-        }, userNickname, userAvatarSafe);
-        if (!isViewOnce) {
-          saveToVault({
-            id: vaultId,
-            type: 'video',
-            uri: asset.uri,
-            name: 'video.mp4',
-            mimeType: 'video/mp4',
-            senderNickname: userNickname,
-          }, vaultId);
+      if (mediaInfo.type === 'image') {
+        const asset = await mediaService.pickImage();
+        if (asset) {
+          handleSendImage(asset, isViewOnce);
         }
+      } else if (mediaInfo.type === 'file') {
+        const asset = await mediaService.pickDocument();
+        if (asset) {
+          handleSendFile(asset, isViewOnce);
+        }
+      } else if (mediaInfo.type === 'voice') {
+        setIsPendingVoiceViewOnce(isViewOnce);
+        handleStartRecording();
+      } else if (mediaInfo.type === 'video') {
+        const asset = await mediaService.pickVideo();
+        if (asset) {
+          handleSendVideo(asset, isViewOnce);
+        }
+      } else {
+        const mediaTypeEmojis = {
+          timer: '⏱️',
+        };
+        const emoji = mediaTypeEmojis[mediaInfo.type] || '📎';
+        alert(`✓ Ready to send ${mediaInfo.label}\n${emoji}`);
       }
     } catch (err) {
-      console.error("[ChatMessage] Video Selection Error:", err);
+      console.error("[ChatMessage] Media selection error:", err);
     }
   };
 
-  const handleSendFile = async (isViewOnce = false) => {
+  const handleSendVideo = async (asset, isViewOnce = false) => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-        copyToCacheDirectory: true,
+      if (!roomId) return;
+
+      // 0. Add optimistic message to UI
+      const tempId = "temp-" + Date.now();
+      const tempMsg = {
+        id: tempId,
+        sender: 'sent',
+        text: isViewOnce ? 'Sent a view-once video' : 'Sent a video',
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: Date.now(),
+        type: isViewOnce ? 'view-once' : 'video',
+        originalType: 'video',
+        isViewOnce: isViewOnce,
+        readStatus: 'sending',
+        videoUri: asset.uri, // Show local version while uploading
+        avatar: userAvatarSafe,
+      };
+      setMessages(prev => [...prev, tempMsg]);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      // 1. Compress video
+      const compressedUri = await mediaService.compressVideo(asset.uri, (progress) => {
+        setUploadProgress(Math.round(progress * 20)); // First 20% for compression
       });
 
-      if (!result.canceled) {
-        const asset = result.assets[0];
+      const fileToUpload = {
+        uri: compressedUri,
+        name: asset.fileName || `video-${Date.now()}.mp4`,
+        type: 'video/mp4',
+        size: asset.fileSize || asset.size,
+      };
 
-        // Read file into base64
-        const base64Data = await FileSystem.readAsStringAsync(asset.uri, {
-          encoding: 'base64',
+      // 2. Upload to S3 (Standard or Multipart)
+      let uploadResult;
+      const isLarge = fileToUpload.size > 50 * 1024 * 1024;
+
+      if (isLarge) {
+        uploadResult = await mediaService.uploadLargeFile(fileToUpload, userCID, (p) => {
+          setUploadProgress(20 + Math.round(p * 0.8)); // Remaining 80% for upload
         });
+      } else {
+        uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+          setUploadProgress(20 + Math.round(p * 0.8));
+        });
+      }
 
-        const roomId = route?.params?.chatId;
-        if (!roomId) return;
+      // 3. Save metadata
+      await mediaService.saveMetadata({
+        ...uploadResult,
+        sender_id: userCID,
+      }, roomId);
 
+      // 4. Send via socket
+      socketService.sendMessage(roomId, {
+        type: isViewOnce ? 'view-once' : 'video',
+        originalType: 'video',
+        isViewOnce: isViewOnce,
+        videoUri: uploadResult.fileUrl,
+        text: isViewOnce ? 'Sent a view-once video' : 'Sent a video',
+      }, userNickname, userAvatarSafe);
+
+      setIsUploading(false);
+      setUploadProgress(0);
+    } catch (err) {
+      console.error("[ChatMessage] Video Upload Error:", err);
+      setIsUploading(false);
+      alert("Failed to upload video");
+    }
+  };
+
+
+  const handleSendFile = async (asset, isViewOnce = false) => {
+    try {
+      if (!roomId) return;
+
+      // 0. Add optimistic message to UI
+      const tempId = "temp-" + Date.now();
+      const tempMsg = {
+        id: tempId,
+        sender: 'sent',
+        text: isViewOnce ? `Sent a view-once file: ${asset.name}` : `Sent a file: ${asset.name}`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: Date.now(),
+        type: isViewOnce ? 'view-once' : 'file',
+        originalType: 'file',
+        isViewOnce: isViewOnce,
+        readStatus: 'sending',
+        fileUri: asset.uri,
+        fileName: asset.name,
+        fileSize: asset.size,
+        mimeType: asset.mimeType,
+        avatar: userAvatarSafe,
+      };
+      setMessages(prev => [...prev, tempMsg]);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      const fileToUpload = {
+        uri: asset.uri,
+        name: asset.name,
+        type: asset.mimeType || 'application/octet-stream',
+        size: asset.size,
+      };
+
+      // 1. Upload to S3
+      const uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+        setUploadProgress(p);
+      });
+
+      // 2. Save metadata
+      await mediaService.saveMetadata({
+        ...uploadResult,
+        sender_id: userCID,
+      }, roomId);
+
+      // 3. Send via socket
+      socketService.sendMessage(roomId, {
+        type: isViewOnce ? 'view-once' : 'file',
+        originalType: 'file',
+        isViewOnce: isViewOnce,
+        fileUri: uploadResult.fileUrl,
+        fileName: asset.name,
+        fileSize: asset.size,
+        mimeType: asset.mimeType,
+        text: isViewOnce ? `Sent a view-once file: ${asset.name}` : `Sent a file: ${asset.name}`,
+      }, userNickname, userAvatarSafe);
+
+      // ── Save to Vault (non-view-once only) ────────────────────
+      if (!isViewOnce) {
         const vaultId = 'vault-file-' + Date.now();
-
-        // Add to UI immediately
-        const tempMsg = {
-          id: "temp-file-" + Date.now(),
-          sender: 'sent',
-          text: '',
-          fileName: asset.name,
-          fileSize: asset.size,
-          fileUri: asset.uri,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          createdAt: Date.now(), // CRITICAL for cleanup interval
-          type: isViewOnce ? 'view-once' : 'file',
-          originalType: 'file',
-          isViewOnce: isViewOnce,
-          readStatus: 'sending',
-          avatar: userAvatarSafe,
-        };
-
-        setMessages(prev => [...prev, tempMsg]);
-        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
-
-        socketService.sendMessage(roomId, {
-          type: isViewOnce ? 'view-once' : 'file',
-          originalType: 'file',
-          isViewOnce: isViewOnce,
-          uri: `data:${asset.mimeType};base64,${base64Data}`,
+        saveToVault({
+          id: vaultId,
+          type: 'file',
+          uri: asset.uri,
           name: asset.name,
           size: asset.size,
           mimeType: asset.mimeType,
-          text: isViewOnce ? `Sent a view-once file: ${asset.name}` : `Sent a file: ${asset.name}`,
-        }, userNickname, userAvatarSafe);
-
-        // ── Save to Vault (non-view-once only) ────────────────────
-        if (!isViewOnce) {
-          saveToVault({
-            id: vaultId,
-            type: 'file',
-            uri: asset.uri,
-            name: asset.name,
-            size: asset.size,
-            mimeType: asset.mimeType,
-            senderNickname: userNickname,
-          }, vaultId);
-        }
+          senderNickname: userNickname,
+        }, vaultId);
       }
+
+      setIsUploading(false);
+      setUploadProgress(0);
     } catch (err) {
-      console.error("[ChatMessage] File Selection Error:", err);
+      console.error("[ChatMessage] File Upload Error:", err);
+      setIsUploading(false);
+      alert("Failed to upload file");
     }
   };
 
@@ -1681,51 +1699,80 @@ export default function ChatMessageScreen({ navigation, route }) {
     }
   };
 
-  const handleSendImage = async (localUri, base64Data, isViewOnce = false) => {
+  const handleSendImage = async (asset, isViewOnce = false) => {
     if (!roomId) return;
 
-    const vaultId = 'vault-img-' + Date.now();
-
-    // Add to UI immediately
-    const tempMsg = {
-      id: "temp-img-" + Date.now(),
-      sender: 'sent',
-      text: '',
-      image: localUri,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      createdAt: Date.now(), // CRITICAL for cleanup interval
-      type: isViewOnce ? 'view-once' : 'image',
-      originalType: 'image',
-      isViewOnce: isViewOnce,
-      readStatus: 'sending',
-      avatar: userAvatarSafe,
-    };
-
-    setMessages(prev => [...prev, tempMsg]);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
-
     try {
+      // 0. Add optimistic message to UI
+      const tempId = "temp-" + Date.now();
+      const tempMsg = {
+        id: tempId,
+        sender: 'sent',
+        text: isViewOnce ? 'Sent a view-once photo' : 'Sent a photo',
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: Date.now(),
+        type: isViewOnce ? 'view-once' : 'image',
+        originalType: 'image',
+        isViewOnce: isViewOnce,
+        readStatus: 'sending',
+        image: asset.uri,
+        avatar: userAvatarSafe,
+      };
+      setMessages(prev => [...prev, tempMsg]);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      // 1. Compress image
+      const compressedUri = await mediaService.compressImage(asset.uri);
+
+      const fileToUpload = {
+        uri: compressedUri,
+        name: asset.fileName || `photo-${Date.now()}.jpg`,
+        type: 'image/jpeg',
+        size: asset.fileSize || asset.size || 0,
+      };
+
+      // 2. Upload to S3
+      const uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+        setUploadProgress(p);
+      });
+
+      // 3. Save metadata
+      await mediaService.saveMetadata({
+        ...uploadResult,
+        sender_id: userCID,
+      }, roomId);
+
+      // 4. Send via socket
       socketService.sendMessage(roomId, {
-      type: isViewOnce ? 'view-once' : 'image',
-      originalType: 'image',
-      isViewOnce: isViewOnce,
-      uri: base64Data,
-      text: isViewOnce ? 'Sent a view-once photo' : 'Sent a photo',
-    }, userNickname, userAvatarSafe);
+        type: isViewOnce ? 'view-once' : 'image',
+        originalType: 'image',
+        isViewOnce: isViewOnce,
+        image: uploadResult.fileUrl,
+        text: isViewOnce ? 'Sent a view-once photo' : 'Sent a photo',
+      }, userNickname, userAvatarSafe);
 
       // ── Save to Vault (non-view-once only) ────────────────────
       if (!isViewOnce) {
+        const vaultId = 'vault-img-' + Date.now();
         saveToVault({
           id: vaultId,
           type: 'image',
-          uri: localUri,
+          uri: asset.uri,
           name: 'photo.jpg',
           mimeType: 'image/jpeg',
           senderNickname: userNickname,
         }, vaultId);
       }
+
+      setIsUploading(false);
+      setUploadProgress(0);
     } catch (err) {
       console.error("[ChatMessage] Send Image Error:", err);
+      setIsUploading(false);
+      alert("Failed to upload image");
     }
   };
 
@@ -1830,39 +1877,34 @@ export default function ChatMessageScreen({ navigation, route }) {
 
       if (!uri) return;
 
-      // Read audio to base64
-      const base64Data = await FileSystem.readAsStringAsync(uri, {
-        encoding: 'base64',
-      });
+      // 1. Upload to S3
+      setIsUploading(true);
+      setUploadProgress(0);
 
-      const payloadUri = `data:audio/m4a;base64,${base64Data}`;
-
-      // Add to UI immediately
-      const isViewOnce = isPendingVoiceViewOnce;
-      const tempMsg = {
-        id: "temp-voice-" + Date.now(),
-        sender: 'sent',
-        text: isViewOnce ? 'Sent a view-once voice message' : '',
-        voiceUri: uri,
-        duration: finalDuration,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        createdAt: Date.now(), // CRITICAL for cleanup interval
-        type: isViewOnce ? 'view-once' : 'voice',
-        originalType: 'voice',
-        isViewOnce: isViewOnce,
-        readStatus: 'sending',
-        avatar: userAvatarSafe,
+      const fileToUpload = {
+        uri: uri,
+        name: `voice-${Date.now()}.m4a`,
+        type: 'audio/m4a',
+        size: 0, // We'll get size after upload if needed
       };
 
-      setMessages(prev => [...prev, tempMsg]);
-      setIsPendingVoiceViewOnce(false); // Reset after send
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+      const uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+        setUploadProgress(p);
+      });
 
+      // 2. Save metadata
+      await mediaService.saveMetadata({
+        ...uploadResult,
+        sender_id: userCID,
+      }, roomId);
+
+      // 3. Send via socket
+      const isViewOnce = isPendingVoiceViewOnce;
       socketService.sendMessage(roomId, {
         type: isViewOnce ? 'view-once' : 'voice',
         originalType: 'voice',
         isViewOnce: isViewOnce,
-        uri: payloadUri,
+        voiceUri: uploadResult.fileUrl,
         duration: finalDuration,
         text: isViewOnce ? 'Sent a view-once voice message' : 'Sent a voice message',
       }, userNickname, userAvatarSafe);
@@ -2091,6 +2133,15 @@ export default function ChatMessageScreen({ navigation, route }) {
               paddingBottom: SPACING.md,
             }
           ]}>
+            {isUploading && (
+              <View style={styles.uploadProgressContainer}>
+                <Text style={styles.uploadProgressText}>Uploading: {uploadProgress}%</Text>
+                <View style={styles.uploadProgressBar}>
+                  <View style={[styles.uploadProgressFill, { width: `${uploadProgress}%` }]} />
+                </View>
+              </View>
+            )}
+
             {recording ? (
               <View style={styles.recordingInterface}>
                 <View style={styles.recordingDot} />
@@ -2106,44 +2157,44 @@ export default function ChatMessageScreen({ navigation, route }) {
               </View>
             ) : (
               <>
-                  <TouchableOpacity
-                    style={[
-                      styles.attachBtn,
-                      {
-                        width: responsiveSize(36, screenWidth),
-                        height: responsiveSize(36, screenWidth),
-                        borderRadius: responsiveSize(18, screenWidth),
-                      }
-                    ]}
-                    activeOpacity={0.6}
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      setShowAttachMediaModal(true);
-                    }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text style={{ fontSize: responsiveFontSize(18, screenWidth) }}>📎</Text>
-                  </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.attachBtn,
+                    {
+                      width: responsiveSize(36, screenWidth),
+                      height: responsiveSize(36, screenWidth),
+                      borderRadius: responsiveSize(18, screenWidth),
+                    }
+                  ]}
+                  activeOpacity={0.6}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setShowAttachMediaModal(true);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={{ fontSize: responsiveFontSize(18, screenWidth) }}>📎</Text>
+                </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.viewOnceBtn,
-                      isViewOnceText && styles.viewOnceBtnActive,
-                      {
-                        width: responsiveSize(36, screenWidth),
-                        height: responsiveSize(36, screenWidth),
-                        borderRadius: responsiveSize(18, screenWidth),
-                        marginLeft: 4,
-                      }
-                    ]}
-                    activeOpacity={0.6}
-                    onPress={() => setIsViewOnceText(!isViewOnceText)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text style={{ fontSize: responsiveFontSize(18, screenWidth) }}>
-                      {isViewOnceText ? '👁️‍🗨️' : '👁️'}
-                    </Text>
-                  </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.viewOnceBtn,
+                    isViewOnceText && styles.viewOnceBtnActive,
+                    {
+                      width: responsiveSize(36, screenWidth),
+                      height: responsiveSize(36, screenWidth),
+                      borderRadius: responsiveSize(18, screenWidth),
+                      marginLeft: 4,
+                    }
+                  ]}
+                  activeOpacity={0.6}
+                  onPress={() => setIsViewOnceText(!isViewOnceText)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={{ fontSize: responsiveFontSize(18, screenWidth) }}>
+                    {isViewOnceText ? '👁️‍🗨️' : '👁️'}
+                  </Text>
+                </TouchableOpacity>
 
                 <TextInput
                   style={[
@@ -3302,5 +3353,35 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: COLORS.dark,
+  },
+  uploadProgressContainer: {
+    position: 'absolute',
+    top: -50,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 10,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  uploadProgressText: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 5,
+    fontWeight: 'bold',
+  },
+  uploadProgressBar: {
+    width: '100%',
+    height: 4,
+    backgroundColor: '#eee',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  uploadProgressFill: {
+    height: '100%',
+    backgroundColor: COLORS.primary,
   },
 });
