@@ -7,7 +7,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const MSG_PREFIX = 'losky_msg_';
 const CHAT_LIST_KEY = 'losky_chat_list';

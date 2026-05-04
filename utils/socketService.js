@@ -411,6 +411,7 @@ class SocketService {
 
     // message can be a string or an object { type, text, uri, etc }
     this.socket.emit("message:send", {
+      id: (typeof message === 'object') ? message.id : null,
       roomId,
       message,
       senderCid: this.userCid,

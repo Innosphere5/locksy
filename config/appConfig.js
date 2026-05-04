@@ -1,6 +1,6 @@
 // appConfig.js — FIXED VERSION
 
-const SERVER_IP = "10.99.91.201"; // your PC IP
+const SERVER_IP = "192.168.31.172"; // your PC IP
 const SOCKET_PORT = 5050;
 const API_PORT = 3000;
 const MEDIA_PORT = 5050;

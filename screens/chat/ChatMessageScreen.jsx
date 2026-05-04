@@ -18,6 +18,7 @@ import {
   Dimensions,
   Image,
   Vibration,
+  ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -36,6 +37,8 @@ import vaultStorage from '../../utils/vaultStorage';
 import { useCIDContext } from '../../context/CIDContext';
 import { setChatLock, clearChatLock, getChatLockStatus } from '../../utils/secureStorage';
 import mediaService from '../../src/services/mediaService';
+import { uploadE2EEFile, downloadAndDecryptFile } from '../../utils/e2eeFileService';
+import { deriveSharedSecret } from '../../utils/cryptoEngine';
 
 // ============================================================================
 // RESPONSIVE UTILITY FUNCTIONS
@@ -946,7 +949,7 @@ export default function ChatMessageScreen({ navigation, route }) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const { userCID, userNickname, userAvatar } = useCIDContext();
+  const { userCID, userNickname, userAvatar, identityPrivKeyRef, contacts } = useCIDContext();
 
   // Get room info from route params (passed from AddContactByCIDScreen)
   const roomId = route?.params?.chatId;
@@ -1000,6 +1003,72 @@ export default function ChatMessageScreen({ navigation, route }) {
   const [recording, setRecording] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingTimerRef = useRef(null);
+
+  // E2EE Session Key
+  const [sessionKey, setSessionKey] = useState(null);
+
+  useEffect(() => {
+    const deriveKey = async () => {
+      if (!contactCID || !identityPrivKeyRef.current) return;
+      const partner = contacts.find(c => c.cid === contactCID);
+      if (partner && partner.publicKey) {
+        try {
+          const key = await deriveSharedSecret(identityPrivKeyRef.current, partner.publicKey);
+          setSessionKey(key);
+          console.log("[ChatMessage] E2EE Session Key derived");
+        } catch (err) {
+          console.error("[ChatMessage] Failed to derive session key:", err);
+        }
+      }
+    };
+    deriveKey();
+  }, [contacts, contactCID, isFocused]);
+
+  // --- AUTOMATIC DECRYPTION FOR E2EE MEDIA ---
+  useEffect(() => {
+    if (!sessionKey || messages.length === 0) return;
+
+    const decryptMessages = async () => {
+      let needsUpdate = false;
+      const updatedMessages = await Promise.all(messages.map(async (msg) => {
+        // If it's E2EE, has a media_id, but hasn't been decrypted locally yet
+        if (msg.is_e2ee && msg.media_id && !msg.decryptedUri && !msg.isOpened) {
+          try {
+            console.log(`[ChatMessage] Decrypting E2EE media for message: ${msg.id}`);
+            const localUri = await downloadAndDecryptFile(sessionKey, { id: msg.media_id });
+            if (localUri) {
+              needsUpdate = true;
+              const decryptedMsg = {
+                ...msg,
+                decryptedUri: localUri,
+                // Override the display URIs with the decrypted local version
+                image: (msg.type === 'image' || msg.originalType === 'image') ? localUri : msg.image,
+                videoUri: (msg.type === 'video' || msg.originalType === 'video') ? localUri : msg.videoUri,
+                fileUri: (msg.type === 'file' || msg.originalType === 'file') ? localUri : msg.fileUri,
+                voiceUri: (msg.type === 'voice' || msg.originalType === 'voice') ? localUri : msg.voiceUri,
+              };
+
+              // Auto-save to vault once decrypted (skip view-once)
+              if (!msg.isViewOnce) {
+                saveToVault(decryptedMsg, msg.id);
+              }
+
+              return decryptedMsg;
+            }
+          } catch (err) {
+            console.error(`[ChatMessage] Failed to decrypt message ${msg.id}:`, err);
+          }
+        }
+        return msg;
+      }));
+
+      if (needsUpdate) {
+        setMessages(updatedMessages);
+      }
+    };
+
+    decryptMessages();
+  }, [messages, sessionKey]);
 
   const flatListRef = useRef(null);
   const messagesRef = useRef([]);
@@ -1066,18 +1135,15 @@ export default function ChatMessageScreen({ navigation, route }) {
     initialize();
 
     // 4. Subscribe to new messages using multiplexed listener
-    const unsubscribeMsg = socketService.on("message:received", (message) => {
+    const unsubReceived = socketService.on("message:received", (message) => {
       if (isMounted && message.roomId === roomId) {
         const newMsg = formatSocketMsg(message);
         setMessages(prev => {
-          // Deduplicate: If this is a message we sent, it might match a 'temp-' message.
-          // ── BUG FIX: Match on BOTH type AND text, not just text.
-          // Previously matching only on text='' caused ALL media temp messages
-          // to be treated as interchangeable, so a video echo could wrongly
-          // replace an image temp message, leaving the original image orphaned.
+          // 1. Precise Deduplication
+          if (prev.find(m => m.id === newMsg.id)) return prev;
+
+          // 2. Optimistic Echo Handling
           if (newMsg.sender === 'sent') {
-            // Find the most recent temp message of the same type
-            // (search from end to handle multiple queued sends of same type)
             let tempIndex = -1;
             for (let i = prev.length - 1; i >= 0; i--) {
               const m = prev[i];
@@ -1091,25 +1157,19 @@ export default function ChatMessageScreen({ navigation, route }) {
               }
             }
             if (tempIndex !== -1) {
-              // Replace temp message with the official server one
               const next = [...prev];
               next[tempIndex] = { ...newMsg, createdAt: newMsg.createdAt || Date.now() };
               return next;
             }
           }
-
-          if (prev.some(m => m.id === newMsg.id)) return prev;
           return [...prev, newMsg];
         });
         setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
 
         // ── Auto-save RECEIVED (from others) media to Vault ──
-        // We skip own messages here because those are already saved at send-time.
-        // This prevents double-saving and handles only truly received media.
         const isFromOther = message.senderCid !== userCID;
         const msgData = message.message && typeof message.message === 'object' ? message.message : null;
         if (isFromOther && msgData && ['image', 'video', 'file', 'voice'].includes(msgData.type)) {
-          // Skip view-once media — intentionally not archived
           if (!msgData.isViewOnce) {
             saveToVault({ ...message, ...msgData }, message.id);
           }
@@ -1117,15 +1177,13 @@ export default function ChatMessageScreen({ navigation, route }) {
       }
     });
 
-    // 5. Subscribe to message deletion event
-    const unsubscribeDel = socketService.on("message:deleted", (data) => {
+    const unsubDeleted = socketService.on("message:deleted", (data) => {
       if (isMounted && data.roomId === roomId) {
         setMessages(prev => prev.filter(m => m.id !== data.messageId));
       }
     });
 
-    // 6. Subscribe to message reaction event
-    const unsubscribeReact = socketService.on("message:reaction:updated", (data) => {
+    const unsubReact = socketService.on("message:reaction:updated", (data) => {
       if (isMounted && data.roomId === roomId) {
         setMessages(prev => prev.map(m => {
           if (m.id === data.messageId) {
@@ -1142,8 +1200,7 @@ export default function ChatMessageScreen({ navigation, route }) {
       }
     });
 
-    // 7. Subscribe to message opened event (View Once)
-    const unsubscribeOpened = socketService.on("message:opened", (data) => {
+    const unsubOpened = socketService.on("message:opened", (data) => {
       if (isMounted && data.roomId === roomId) {
         setMessages(prev => prev.map(m => {
           if (m.id === data.messageId) {
@@ -1154,7 +1211,7 @@ export default function ChatMessageScreen({ navigation, route }) {
               videoUri: null,
               fileUri: null,
               voiceUri: null,
-              text: null // Clear text too for view-once text
+              text: null
             };
           }
           return m;
@@ -1162,14 +1219,12 @@ export default function ChatMessageScreen({ navigation, route }) {
       }
     });
 
-    initialize();
-
     return () => {
       isMounted = false;
-      unsubscribeMsg();
-      unsubscribeDel();
-      unsubscribeReact();
-      unsubscribeOpened();
+      unsubReceived();
+      unsubDeleted();
+      unsubReact();
+      unsubOpened();
     };
   }, [roomId, navigation]);
 
@@ -1225,6 +1280,8 @@ export default function ChatMessageScreen({ navigation, route }) {
       timerMs: message.timerMs || (isMedia && msgData.timerMs),
       expiresAt: message.expiresAt || (isMedia && msgData.expiresAt) ||
         ((message.timerMs || (isMedia && msgData.timerMs)) ? (Date.now() + (message.timerMs || msgData.timerMs)) : null),
+      is_e2ee: message.is_e2ee || (isMedia && msgData.is_e2ee),
+      media_id: message.media_id || (isMedia && msgData.media_id),
     };
   };
 
@@ -1243,8 +1300,17 @@ export default function ChatMessageScreen({ navigation, route }) {
       // Extract the URI / data from various message shapes
       const msgData = msg.message && typeof msg.message === 'object' ? msg.message : msg;
       const isImage = type === 'image' || (msgData.originalType === 'photo');
-      const uri = msgData.uri || msgData.image || msg.image || msg.videoUri || msg.fileUri || msg.voiceUri;
-      if (!uri) return;
+      
+      // For E2EE messages, we MUST use the decrypted local URI
+      const isE2EE = msg.is_e2ee || msgData.is_e2ee;
+      const uri = isE2EE 
+        ? (msg.decryptedUri || msgData.decryptedUri) 
+        : (msgData.uri || msgData.image || msg.image || msg.videoUri || msg.fileUri || msg.voiceUri);
+      
+      if (!uri) {
+        if (isE2EE) console.log("[ChatMessage] Skipping vault save for E2EE item (not yet decrypted)");
+        return;
+      }
 
       const vaultType = isImage ? 'image' : type;
       const name = msgData.name || msg.fileName || (type === 'image' ? 'photo.jpg' : type === 'video' ? 'video.mp4' : type === 'voice' ? 'voice.m4a' : 'file');
@@ -1532,40 +1598,55 @@ export default function ChatMessageScreen({ navigation, route }) {
         setUploadProgress(Math.round(progress * 20)); // First 20% for compression
       });
 
-      const fileToUpload = {
-        uri: compressedUri,
-        name: asset.fileName || `video-${Date.now()}.mp4`,
-        type: 'video/mp4',
-        size: asset.fileSize || asset.size,
-      };
-
-      // 2. Upload to S3 (Standard or Multipart)
       let uploadResult;
-      const isLarge = fileToUpload.size > 50 * 1024 * 1024;
-
-      if (isLarge) {
-        uploadResult = await mediaService.uploadLargeFile(fileToUpload, userCID, (p) => {
-          setUploadProgress(20 + Math.round(p * 0.8)); // Remaining 80% for upload
-        });
+      if (sessionKey) {
+        // --- E2EE FLOW ---
+        console.log("[ChatMessage] Using E2EE for video upload");
+        uploadResult = await uploadE2EEFile(
+          sessionKey,
+          userCID,
+          contactCID,
+          roomId,
+          compressedUri,
+          asset.fileSize || asset.size || 0,
+          (p) => setUploadProgress(20 + Math.round(p * 0.8))
+        );
       } else {
-        uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
-          setUploadProgress(20 + Math.round(p * 0.8));
-        });
-      }
+        // --- REGULAR FLOW ---
+        const fileToUpload = {
+          uri: compressedUri,
+          name: asset.fileName || `video-${Date.now()}.mp4`,
+          type: 'video/mp4',
+          size: asset.fileSize || asset.size,
+        };
 
-      // 3. Save metadata
-      await mediaService.saveMetadata({
-        ...uploadResult,
-        sender_id: userCID,
-      }, roomId);
+        const isLarge = fileToUpload.size > 50 * 1024 * 1024;
+        if (isLarge) {
+          uploadResult = await mediaService.uploadLargeFile(fileToUpload, userCID, (p) => {
+            setUploadProgress(20 + Math.round(p * 0.8));
+          });
+        } else {
+          uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+            setUploadProgress(20 + Math.round(p * 0.8));
+          });
+        }
+
+        await mediaService.saveMetadata({
+          ...uploadResult,
+          sender_id: userCID,
+        }, roomId);
+      }
 
       // 4. Send via socket
       socketService.sendMessage(roomId, {
+        id: tempId, // Pass tempId to avoid duplicates
         type: isViewOnce ? 'view-once' : 'video',
         originalType: 'video',
         isViewOnce: isViewOnce,
         videoUri: uploadResult.fileUrl,
         text: isViewOnce ? 'Sent a view-once video' : 'Sent a video',
+        is_e2ee: !!sessionKey,
+        media_id: uploadResult.id,
       }, userNickname, userAvatarSafe);
 
       setIsUploading(false);
@@ -1606,26 +1687,41 @@ export default function ChatMessageScreen({ navigation, route }) {
       setIsUploading(true);
       setUploadProgress(0);
 
-      const fileToUpload = {
-        uri: asset.uri,
-        name: asset.name,
-        type: asset.mimeType || 'application/octet-stream',
-        size: asset.size,
-      };
+      let uploadResult;
+      if (sessionKey) {
+        // --- E2EE FLOW ---
+        console.log("[ChatMessage] Using E2EE for file upload");
+        uploadResult = await uploadE2EEFile(
+          sessionKey,
+          userCID,
+          contactCID,
+          roomId,
+          asset.uri,
+          asset.size || 0,
+          (p) => setUploadProgress(p)
+        );
+      } else {
+        // --- REGULAR FLOW ---
+        const fileToUpload = {
+          uri: asset.uri,
+          name: asset.name,
+          type: asset.mimeType || 'application/octet-stream',
+          size: asset.size,
+        };
 
-      // 1. Upload to S3
-      const uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
-        setUploadProgress(p);
-      });
+        uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+          setUploadProgress(p);
+        });
 
-      // 2. Save metadata
-      await mediaService.saveMetadata({
-        ...uploadResult,
-        sender_id: userCID,
-      }, roomId);
+        await mediaService.saveMetadata({
+          ...uploadResult,
+          sender_id: userCID,
+        }, roomId);
+      }
 
       // 3. Send via socket
       socketService.sendMessage(roomId, {
+        id: tempId, // Pass tempId
         type: isViewOnce ? 'view-once' : 'file',
         originalType: 'file',
         isViewOnce: isViewOnce,
@@ -1634,6 +1730,8 @@ export default function ChatMessageScreen({ navigation, route }) {
         fileSize: asset.size,
         mimeType: asset.mimeType,
         text: isViewOnce ? `Sent a view-once file: ${asset.name}` : `Sent a file: ${asset.name}`,
+        is_e2ee: !!sessionKey,
+        media_id: uploadResult.id,
       }, userNickname, userAvatarSafe);
 
       // ── Save to Vault (non-view-once only) ────────────────────
@@ -1727,31 +1825,48 @@ export default function ChatMessageScreen({ navigation, route }) {
       // 1. Compress image
       const compressedUri = await mediaService.compressImage(asset.uri);
 
-      const fileToUpload = {
-        uri: compressedUri,
-        name: asset.fileName || `photo-${Date.now()}.jpg`,
-        type: 'image/jpeg',
-        size: asset.fileSize || asset.size || 0,
-      };
+      let uploadResult;
+      if (sessionKey) {
+        // --- E2EE FLOW ---
+        console.log("[ChatMessage] Using E2EE for image upload");
+        uploadResult = await uploadE2EEFile(
+          sessionKey,
+          userCID,
+          contactCID,
+          roomId,
+          compressedUri,
+          asset.fileSize || asset.size || 0,
+          (p) => setUploadProgress(p)
+        );
+      } else {
+        // --- REGULAR FLOW (Fallback) ---
+        const fileToUpload = {
+          uri: compressedUri,
+          name: asset.fileName || `photo-${Date.now()}.jpg`,
+          type: 'image/jpeg',
+          size: asset.fileSize || asset.size || 0,
+        };
 
-      // 2. Upload to S3
-      const uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
-        setUploadProgress(p);
-      });
+        uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+          setUploadProgress(p);
+        });
 
-      // 3. Save metadata
-      await mediaService.saveMetadata({
-        ...uploadResult,
-        sender_id: userCID,
-      }, roomId);
+        await mediaService.saveMetadata({
+          ...uploadResult,
+          sender_id: userCID,
+        }, roomId);
+      }
 
       // 4. Send via socket
       socketService.sendMessage(roomId, {
+        id: tempId, // Pass tempId
         type: isViewOnce ? 'view-once' : 'image',
         originalType: 'image',
         isViewOnce: isViewOnce,
         image: uploadResult.fileUrl,
         text: isViewOnce ? 'Sent a view-once photo' : 'Sent a photo',
+        is_e2ee: !!sessionKey, // Mark as E2EE
+        media_id: uploadResult.id, // For metadata lookup
       }, userNickname, userAvatarSafe);
 
       // ── Save to Vault (non-view-once only) ────────────────────
@@ -1832,6 +1947,16 @@ export default function ChatMessageScreen({ navigation, route }) {
     setShowViewOncePreview(true);
   };
 
+  // Keep view-once preview in sync with background decryption
+  useEffect(() => {
+    if (showViewOncePreview && viewOncePreviewMsg) {
+      const updated = messages.find(m => m.id === viewOncePreviewMsg.id);
+      if (updated && updated.decryptedUri && !viewOncePreviewMsg.decryptedUri) {
+        setViewOncePreviewMsg(updated);
+      }
+    }
+  }, [messages, showViewOncePreview, viewOncePreviewMsg]);
+
   const handleCloseViewOnce = async () => {
     if (viewOncePreviewMsg) {
       const msgId = viewOncePreviewMsg.id;
@@ -1881,32 +2006,50 @@ export default function ChatMessageScreen({ navigation, route }) {
       setIsUploading(true);
       setUploadProgress(0);
 
-      const fileToUpload = {
-        uri: uri,
-        name: `voice-${Date.now()}.m4a`,
-        type: 'audio/m4a',
-        size: 0, // We'll get size after upload if needed
-      };
+      let uploadResult;
+      if (sessionKey) {
+        // --- E2EE FLOW ---
+        console.log("[ChatMessage] Using E2EE for voice upload");
+        uploadResult = await uploadE2EEFile(
+          sessionKey,
+          userCID,
+          contactCID,
+          roomId,
+          uri,
+          0, // Voice recording size unknown until after upload or check
+          (p) => setUploadProgress(p)
+        );
+      } else {
+        // --- REGULAR FLOW ---
+        const fileToUpload = {
+          uri: uri,
+          name: `voice-${Date.now()}.m4a`,
+          type: 'audio/m4a',
+          size: 0,
+        };
 
-      const uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
-        setUploadProgress(p);
-      });
+        uploadResult = await mediaService.uploadFile(fileToUpload, userCID, (p) => {
+          setUploadProgress(p);
+        });
 
-      // 2. Save metadata
-      await mediaService.saveMetadata({
-        ...uploadResult,
-        sender_id: userCID,
-      }, roomId);
+        await mediaService.saveMetadata({
+          ...uploadResult,
+          sender_id: userCID,
+        }, roomId);
+      }
 
       // 3. Send via socket
       const isViewOnce = isPendingVoiceViewOnce;
       socketService.sendMessage(roomId, {
+        id: 'voice-' + Date.now(), // Generate a stable temp ID for voice
         type: isViewOnce ? 'view-once' : 'voice',
         originalType: 'voice',
         isViewOnce: isViewOnce,
         voiceUri: uploadResult.fileUrl,
         duration: finalDuration,
         text: isViewOnce ? 'Sent a view-once voice message' : 'Sent a voice message',
+        is_e2ee: !!sessionKey,
+        media_id: uploadResult.id,
       }, userNickname, userAvatarSafe);
 
       // ── Save voice to Vault ───────────────────────────────────
@@ -2339,54 +2482,63 @@ export default function ChatMessageScreen({ navigation, route }) {
               </View>
 
               <View style={styles.viewOnceContent}>
-                {(viewOncePreviewMsg?.originalType === 'image' || viewOncePreviewMsg?.originalType === 'photo' || viewOncePreviewMsg?.image) && (
-                  <Image
-                    source={{ uri: viewOncePreviewMsg.image }}
-                    style={styles.fullImage}
-                    resizeMode="contain"
-                    onLoad={() => console.log('[ViewOnce] Image loaded successfully')}
-                    onError={(e) => console.error('[ViewOnce] Image load error:', e.nativeEvent.error)}
-                  />
-                )}
-                {viewOncePreviewMsg?.originalType === 'video' && (
-                  <Video
-                    source={{ uri: viewOncePreviewMsg.videoUri }}
-                    style={styles.fullVideo}
-                    useNativeControls
-                    resizeMode="contain"
-                    shouldPlay
-                    onError={(e) => console.error('[ViewOnce] Video playback error:', e)}
-                    onLoad={() => console.log('[ViewOnce] Video loaded successfully')}
-                  />
-                )}
-                {viewOncePreviewMsg?.originalType === 'file' && (
-                  <View style={styles.viewOnceFilePreview}>
-                    <Text style={{ fontSize: 64 }}>📄</Text>
-                    <Text style={styles.viewOnceFileName}>{viewOncePreviewMsg.fileName}</Text>
-                    <TouchableOpacity
-                      style={styles.viewOnceFileBtn}
-                      onPress={() => handleOpenFile(viewOncePreviewMsg)}
-                    >
-                      <Text style={styles.viewOnceFileBtnText}>Open Document</Text>
-                    </TouchableOpacity>
+                {viewOncePreviewMsg?.is_e2ee && !viewOncePreviewMsg?.decryptedUri && !(viewOncePreviewMsg?.image?.startsWith('file://') || viewOncePreviewMsg?.videoUri?.startsWith('file://')) ? (
+                  <View style={styles.viewOnceLoading}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                    <Text style={styles.viewOnceLoadingText}>Decrypting secure media...</Text>
                   </View>
-                )}
-                {viewOncePreviewMsg?.originalType === 'text' && (
-                  <View style={[styles.viewOnceTextContainer, { maxHeight: screenHeight * 0.7 }]}>
-                    <Text style={[styles.viewOnceTextContent, { fontSize: responsiveFontSize(18, screenWidth) }]}>
-                      {viewOncePreviewMsg.text}
-                    </Text>
-                  </View>
-                )}
-                {viewOncePreviewMsg?.originalType === 'voice' && (
-                  <View style={styles.viewOnceVoiceContainer}>
-                    <VoiceMessagePlayer
-                      uri={viewOncePreviewMsg.voiceUri}
-                      durationText={viewOncePreviewMsg.duration}
-                      isSent={false}
-                      screenWidth={screenWidth}
-                    />
-                  </View>
+                ) : (
+                  <>
+                    {(viewOncePreviewMsg?.originalType === 'image' || viewOncePreviewMsg?.originalType === 'photo' || viewOncePreviewMsg?.image) && (
+                      <Image
+                        source={{ uri: viewOncePreviewMsg.image }}
+                        style={styles.fullImage}
+                        resizeMode="contain"
+                        onLoad={() => console.log('[ViewOnce] Image loaded successfully')}
+                        onError={(e) => console.error('[ViewOnce] Image load error:', e.nativeEvent.error)}
+                      />
+                    )}
+                    {viewOncePreviewMsg?.originalType === 'video' && (
+                      <Video
+                        source={{ uri: viewOncePreviewMsg.videoUri }}
+                        style={styles.fullVideo}
+                        useNativeControls
+                        resizeMode="contain"
+                        shouldPlay
+                        onError={(e) => console.error('[ViewOnce] Video playback error:', e)}
+                        onLoad={() => console.log('[ViewOnce] Video loaded successfully')}
+                      />
+                    )}
+                    {viewOncePreviewMsg?.originalType === 'file' && (
+                      <View style={styles.viewOnceFilePreview}>
+                        <Text style={{ fontSize: 64 }}>📄</Text>
+                        <Text style={styles.viewOnceFileName}>{viewOncePreviewMsg.fileName}</Text>
+                        <TouchableOpacity
+                          style={styles.viewOnceFileBtn}
+                          onPress={() => handleOpenFile(viewOncePreviewMsg)}
+                        >
+                          <Text style={styles.viewOnceFileBtnText}>Open Document</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {viewOncePreviewMsg?.originalType === 'text' && (
+                      <View style={[styles.viewOnceTextContainer, { maxHeight: screenHeight * 0.7 }]}>
+                        <Text style={[styles.viewOnceTextContent, { fontSize: responsiveFontSize(18, screenWidth) }]}>
+                          {viewOncePreviewMsg.text}
+                        </Text>
+                      </View>
+                    )}
+                    {viewOncePreviewMsg?.originalType === 'voice' && (
+                      <View style={styles.viewOnceVoiceContainer}>
+                        <VoiceMessagePlayer
+                          uri={viewOncePreviewMsg.voiceUri}
+                          durationText={viewOncePreviewMsg.duration}
+                          isSent={false}
+                          screenWidth={screenWidth}
+                        />
+                      </View>
+                    )}
+                  </>
                 )}
               </View>
             </SafeAreaView>
@@ -3383,5 +3535,58 @@ const styles = StyleSheet.create({
   uploadProgressFill: {
     height: '100%',
     backgroundColor: COLORS.primary,
+  },
+  // View Once Styles
+  viewOnceContent: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000', // Solid black background for media
+  },
+  fullImage: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#000',
+  },
+  fullVideo: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#000',
+  },
+  viewOnceLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 15,
+  },
+  viewOnceLoadingText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  viewOnceFilePreview: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    padding: 40,
+    borderRadius: 20,
+    width: '80%',
+    gap: 20,
+  },
+  viewOnceFileName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    textAlign: 'center',
+  },
+  viewOnceFileBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 25,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  viewOnceFileBtnText: {
+    color: '#fff',
+    fontWeight: '700',
   },
 });

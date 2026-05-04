@@ -73,7 +73,7 @@ export const fromBase64 = (base64) => {
  * Helper to convert string to UTF-8 bytes.
  * Manual implementation for environments without TextEncoder.
  */
-const strToBytes = (str) => {
+export const strToBytes = (str) => {
   const bytes = new Uint8Array(str.length);
   for (let i = 0; i < str.length; i++) {
     bytes[i] = str.charCodeAt(i);
@@ -198,10 +198,18 @@ export const decryptAESGCM = async (key, encryptedBase64) => {
 // ── SHA-256 Integrity Digest ───────────────────────────────────────
 
 /**
+ * Compute SHA-256 hash and return raw bytes.
+ */
+export const computeSHA256Bytes = (data) => {
+  const dataBytes = typeof data === 'string' ? strToBytes(data) : data;
+  return sha256(dataBytes);
+};
+
+/**
  * Compute SHA-256 hash of a string.
  */
 export const computeSHA256 = async (data) => {
-  const hashBytes = sha256(strToBytes(data));
+  const hashBytes = computeSHA256Bytes(data);
   return Array.from(hashBytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
