@@ -34,6 +34,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Video, ResizeMode, Audio } from 'expo-av';
 import { COLORS, SPACING, RADIUS, SHADOWS } from '../../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import vaultStorage from '../../utils/vaultStorage';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -709,6 +710,7 @@ function EmptyVault({ tab }) {
 // ─── Main Screen ──────────────────────────────────────────────────
 
 export default function VaultScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [allItems,   setAllItems]   = useState([]);
   const [activeTab,  setActiveTab]  = useState('All');
   const [loading,    setLoading]    = useState(true);
@@ -836,7 +838,7 @@ export default function VaultScreen({ navigation }) {
   // ── Render ─────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
 
       {/* ── Header ── */}
@@ -974,28 +976,21 @@ export default function VaultScreen({ navigation }) {
       )}
 
       {/* ── Bottom Navigation ── */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => navigation.navigate('Chats')}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chatbubble-outline" size={22} color={COLORS.tabInactive} />
+      <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate("Chats")}>
+          <Text style={styles.navEmoji}>💬</Text>
           <Text style={styles.navLabel}>Chats</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() => navigation.navigate('Groups')}
-          activeOpacity={0.7}
+          onPress={() => navigation.navigate("Groups")}
         >
-          <Ionicons name="people-outline" size={22} color={COLORS.tabInactive} />
+          <Text style={styles.navEmoji}>👥</Text>
           <Text style={styles.navLabel}>Groups</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} activeOpacity={0.7}>
-          <View style={styles.navActivePill}>
-            <Ionicons name="lock-closed" size={20} color={COLORS.primary} />
-          </View>
-          <Text style={[styles.navLabel, { color: COLORS.primary, fontWeight: '600' }]}>Vault</Text>
+        <TouchableOpacity style={styles.navItem}>
+          <Text style={styles.navEmoji}>🔒</Text>
+          <Text style={[styles.navLabel, styles.navActive]}>Vault</Text>
         </TouchableOpacity>
       </View>
 
@@ -1031,7 +1026,7 @@ export default function VaultScreen({ navigation }) {
         onPin={handlePin}
         onShare={handleShare}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -1385,13 +1380,19 @@ const styles = StyleSheet.create({
 
   // ── Bottom Nav ────────────────────────────────────────────────────
   bottomNav: {
-    flexDirection: 'row', borderTopWidth: 1, borderTopColor: COLORS.border,
-    paddingBottom: 20, paddingTop: 10, backgroundColor: COLORS.background,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    backgroundColor: "#FFFFFF",
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
   },
-  navItem: { flex: 1, alignItems: 'center', gap: 4 },
-  navActivePill: {
-    paddingHorizontal: SPACING.md, paddingVertical: 3,
-    borderRadius: RADIUS.full, backgroundColor: COLORS.primaryLight,
+  navItem: { alignItems: "center", gap: 4 },
+  navEmoji: { fontSize: 24 },
+  navLabel: {
+    fontSize: 11,
+    color: "#94A3B8",
+    fontWeight: "500",
   },
-  navLabel: { fontSize: 11, color: COLORS.tabInactive, fontWeight: '500' },
+  navActive: { color: "#3B82F6", fontWeight: "600" },
 });

@@ -31,6 +31,7 @@ export const STORAGE_KEYS = {
   SCREEN_RECORDING_BLOCK: 'losky_screen_recording_block', // Boolean string
   IDENTITY_PUB:      'losky_identity_pub',     // Plaintext B64 ECDH Public Key
   IDENTITY_PRIV:     'losky_identity_priv',    // Encrypted B64 ECDH Private Key
+  AVATAR:            'losky_avatar',           // User profile photo URI
 };
 
 // ── Bundle Operations ──────────────────────────────────────────────
@@ -282,7 +283,7 @@ export const addContact = async (contact) => {
 };
 
 /**
- * Remove a contact by CID.
+ * Remove a single contact from the saved contacts list.
  *
  * @param {string} cid — Contact ID to remove
  * @returns {Promise<void>}

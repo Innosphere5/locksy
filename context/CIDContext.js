@@ -41,10 +41,12 @@ import {
   loadContacts,
   saveContacts,
   addContact as saveContactToStorage,
+  removeContact as removeContactFromStorage,
   saveIdentityKeys,
   loadIdentityKeys,
 } from "../utils/secureStorage";
 import socketService from "../utils/socketService";
+import mediaService from "../src/services/mediaService";
 import AppConfig from "../config/appConfig";
 
 export const CIDContext = createContext();
@@ -55,6 +57,7 @@ export const CIDProvider = ({ children }) => {
   const [userNickname, setUserNicknameState] = useState("");
   const [userAvatar, setUserAvatarState] = useState(null);
   const [identityPubKey, setIdentityPubKey] = useState(null);
+  const [pushToken, setPushToken] = useState(null);
   const identityPrivKeyRef = useRef(null); // Decrypted private key in RAM
 
   // ── Session State ────────────────────────────────────────────────
@@ -80,6 +83,13 @@ export const CIDProvider = ({ children }) => {
   // ── Init: load fail count ────────────────────────────────────────
   useEffect(() => {
     getFailCount().then(setFailCount).catch(console.error);
+    
+    // Load persisted avatar
+    import('@react-native-async-storage/async-storage').then(({ default: AsyncStorage }) => {
+      AsyncStorage.getItem('losky_avatar').then(val => {
+        if (val) setUserAvatarState(val);
+      });
+    });
   }, []);
 
   // ── Load saved contacts from storage ──────────────────────────────
@@ -119,89 +129,82 @@ export const CIDProvider = ({ children }) => {
 
   // ── Socket.io Connection: Initialize when user is unlocked ───────
   useEffect(() => {
-    if (!isUnlocked || !userCID || socketInitializedRef.current) {
-      return; // Not ready yet
+    if (!isUnlocked || !userCID) {
+      return; 
     }
+
+    const setupSocketListeners = () => {
+      socketService.on("contact:request", (data) => {
+        console.log("[CIDContext] Received contact request from:", data.fromNickname);
+        if (data.publicKey) {
+           setContacts(prev => prev.map(c => c.cid === data.fromCid ? { ...c, publicKey: data.publicKey } : c));
+        }
+        setPendingRequests(prev => {
+          if (prev.some(r => r.fromCid === data.fromCid)) return prev;
+          return [...prev, data];
+        });
+      });
+
+      socketService.on("contact:accepted", (data) => {
+        const otherUser = data.userA === userCID ? data.accepter : data.requester;
+        const newContact = {
+          cid: otherUser.cid,
+          nickname: otherUser.nickname,
+          avatar: otherUser.avatar,
+          publicKey: otherUser.publicKey,
+          status: "online",
+          verified: true,
+          addedAt: new Date().toISOString(),
+          roomId: data.roomId,
+        };
+        addContact(newContact);
+        setPendingRequests(prev => prev.filter(r => r.fromCid !== otherUser.cid));
+      });
+
+      socketService.on("user:status", (data) => {
+        setContacts((prev) =>
+          prev.map((contact) =>
+            contact.cid === data.cid
+              ? { 
+                  ...contact, 
+                  status: data.status, 
+                  publicKey: data.publicKey || contact.publicKey,
+                  nickname: data.nickname || contact.nickname,
+                  avatar: data.avatar || contact.avatar
+                }
+              : contact,
+          ),
+        );
+      });
+    };
 
     const initializeSocket = async () => {
       try {
-        const serverUrl = AppConfig.SOCKET.URL;
-        console.log("[CIDContext] Initializing Socket.io connection...");
-        console.log(`[CIDContext] Server URL: ${serverUrl}`);
+        if (!socketInitializedRef.current) {
+          const serverUrl = AppConfig.SOCKET.URL;
+          console.log("[CIDContext] Initializing Socket.io connection...");
+          await socketService.connect(serverUrl);
+          setSocketConnected(true);
+          setSocketError(null);
+          socketInitializedRef.current = true;
+          setupSocketListeners();
+        }
 
-        await socketService.connect(serverUrl);
-
-        // Register user with Socket.io (Including Public Key for Discovery)
         let pubKey = identityPubKey;
         if (!pubKey) {
            const { publicKey } = await loadIdentityKeys();
            pubKey = publicKey;
         }
-        await socketService.registerUser(userCID, userNickname, userAvatar, pubKey);
-
-        setSocketConnected(true);
-        setSocketError(null);
-        socketInitializedRef.current = true;
-
-        console.log("[CIDContext] Socket.io initialized and user registered");
-
-        // Unified event listeners using the new multiplexed socketService
-        socketService.on("contact:request", (data) => {
-          console.log("[CIDContext] Received contact request from:", data.fromNickname);
-          // If we already have this contact, update their public key if provided
-          if (data.publicKey) {
-             setContacts(prev => prev.map(c => c.cid === data.fromCid ? { ...c, publicKey: data.publicKey } : c));
-          }
-          setPendingRequests(prev => {
-            if (prev.some(r => r.fromCid === data.fromCid)) return prev;
-            return [...prev, data];
-          });
-        });
-
-        socketService.on("contact:accepted", (data) => {
-          console.log("[CIDContext] Connection accepted with:", data.userA === userCID ? data.accepter.nickname : data.requester.nickname);
-          
-          const otherUser = data.userA === userCID ? data.accepter : data.requester;
-          
-          const newContact = {
-            cid: otherUser.cid,
-            nickname: otherUser.nickname,
-            avatar: otherUser.avatar,
-            publicKey: otherUser.publicKey,
-            status: "online",
-            verified: true,
-            addedAt: new Date().toISOString(),
-            roomId: data.roomId,
-          };
-          
-          // Single call to addContact (context version) handles state + persistence
-          addContact(newContact);
-
-          // Remove from pending if it was there
-          setPendingRequests(prev => prev.filter(r => r.fromCid !== otherUser.cid));
-        });
-
-        socketService.on("user:status", (data) => {
-          console.log("[CIDContext] User status changed:", data.cid, data.status);
-          setContacts((prev) =>
-            prev.map((contact) =>
-              contact.cid === data.cid
-                ? { ...contact, status: data.status, publicKey: data.publicKey || contact.publicKey }
-                : contact,
-            ),
-          );
-        });
-
-        // Auto-refresh chat list when new message received (handled globally by socketService persistence)
+        await socketService.registerUser(userCID, userNickname, userAvatar, pubKey, pushToken);
+        console.log("[CIDContext] User registration sync complete");
       } catch (error) {
-        console.error("[CIDContext] Socket.io initialization failed:", error);
+        console.error("[CIDContext] Socket.io sync failed:", error);
         setSocketError(error.message || "Connection failed");
       }
     };
 
     initializeSocket();
 
-    // Cleanup on unmount or when unlocked state changes
     return () => {
       if (socketInitializedRef.current && !isUnlocked) {
         socketService.disconnect();
@@ -209,9 +212,28 @@ export const CIDProvider = ({ children }) => {
         socketInitializedRef.current = false;
       }
     };
-  }, [isUnlocked, userCID, userNickname, userAvatar, identityPubKey]);
+  }, [isUnlocked, userCID, userNickname, userAvatar, identityPubKey, pushToken]);
+
+  // ── Sync Push Token ──────────────────────────────────────────────
+  useEffect(() => {
+    if (socketConnected && pushToken && userCID) {
+      console.log("[CIDContext] Syncing push token with server...");
+      // Re-register to update the token on the server
+      const syncToken = async () => {
+        let pubKey = identityPubKey;
+        if (!pubKey) {
+           const { publicKey } = await loadIdentityKeys();
+           pubKey = publicKey;
+        }
+        socketService.registerUser(userCID, userNickname, userAvatar, pubKey, pushToken)
+          .catch(err => console.error("[CIDContext] Push token sync failed:", err));
+      };
+      syncToken();
+    }
+  }, [pushToken, socketConnected, userCID, userNickname, userAvatar, identityPubKey]);
 
   // ── Persist contacts to storage when they change ────────────────
+
   useEffect(() => {
     if (contacts.length > 0) {
       saveContacts(contacts).catch(err =>
@@ -443,18 +465,65 @@ export const CIDProvider = ({ children }) => {
       try {
         const encrypted = await encryptAESGCM(masterKeyRef.current, name);
         await saveEncryptedNickname(encrypted);
+        
+        // SYNC WITH SERVER
+        if (socketConnected && userCID) {
+          socketService.registerUser(userCID, name, userAvatar, identityPubKey, pushToken)
+            .catch(err => console.error("[CIDContext] Profile sync failed:", err));
+        }
       } catch (e) {
         console.error("[CIDContext] Failed to encrypt and save nickname:", e);
       }
     }
-  }, []);
+  }, [socketConnected, userCID, userAvatar, identityPubKey, pushToken]);
 
   /**
    * Update avatar URI (non-sensitive — stored as URI reference only).
    */
-  const updateAvatar = useCallback((imgUri) => {
-    setUserAvatarState(imgUri);
-  }, []);
+  const updateAvatar = useCallback(async (imgUri) => {
+    let finalUri = imgUri;
+
+    // 1. If it's a local file, convert it to a base64 data URL so it can be shared without S3
+    if (imgUri && (imgUri.startsWith('file://') || imgUri.startsWith('content://'))) {
+      if (!userCID) {
+        console.error("[CIDContext] Cannot process avatar: userCID is missing");
+        return;
+      }
+      try {
+        console.log("[CIDContext] Converting local avatar to base64 for user:", userCID);
+        // Fetch the file and convert to base64
+        const res = await fetch(imgUri);
+        const blob = await res.blob();
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        const mime = blob.type || 'image/jpeg';
+        finalUri = `data:${mime};base64,${base64}`;
+        console.log("[CIDContext] Avatar converted to data URL, length:", finalUri.length);
+      } catch (convErr) {
+        console.error("[CIDContext] Failed to convert avatar to base64:", convErr);
+        // Fallback: keep original local URI (will not be visible to others)
+      }
+    }
+
+    setUserAvatarState(finalUri);
+    try {
+      const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
+      await AsyncStorage.setItem('losky_avatar', finalUri);
+      console.log("[CIDContext] Avatar persisted:", finalUri);
+
+      // SYNC WITH SERVER
+      if (socketConnected && userCID) {
+        socketService.registerUser(userCID, userNickname, finalUri, identityPubKey, pushToken)
+          .catch(err => console.error("[CIDContext] Avatar sync failed:", err));
+      }
+    } catch (e) {
+      console.error("[CIDContext] Failed to persist avatar:", e);
+    }
+  }, [socketConnected, userCID, userNickname, identityPubKey, pushToken]);
 
   // ────────────────────────────────────────────────────────────────
   // Contact Management with Socket.io
@@ -483,6 +552,22 @@ export const CIDProvider = ({ children }) => {
     console.log("[CIDContext] Contact added:", newContact);
     return newContact;
   }, []);
+
+  const removeContact = useCallback(async (cid) => {
+    console.log("[CIDContext] Removing contact:", cid);
+    
+    // 1. Update state
+    setContacts(prev => prev.filter(c => c.cid !== cid));
+    
+    // 2. Update storage
+    await removeContactFromStorage(cid);
+
+    // 3. Optional: Notify server or leave room
+    const contact = contacts.find(c => c.cid === cid);
+    if (contact && contact.roomId) {
+      socketService.leaveRoom(contact.roomId);
+    }
+  }, [contacts]);
 
   /**
    * Force refresh of a contact's public key from the server
@@ -617,6 +702,7 @@ export const CIDProvider = ({ children }) => {
     acceptRequest,
     sendRequest,
     addContact,
+    removeContact,
     currentContact,
     setCurrentContact,
     scannedCID,
@@ -634,7 +720,12 @@ export const CIDProvider = ({ children }) => {
     getChatHistory,
     onMessageReceived,
 
+    // Push Notifications
+    setPushToken,
+    pushToken,
+
     // Identity Keys (for secure key exchange)
+
     identityPubKey,
     identityPrivKeyRef,
     refreshContactPublicKey,

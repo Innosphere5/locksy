@@ -12,20 +12,147 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
+import { Alert } from 'react-native';
+import messageStorage from '../../utils/messageStorage';
+import socketService from '../../utils/socketService';
+import signalingService from '../../src/services/signalingService';
+import { useCIDContext } from '../../context/CIDContext';
+import { AUTO_DESTRUCT_OPTIONS } from '../../utils/chatRoom';
 
-/**
- * ContactInfoScreen - Screen 63
- * Show detailed contact information and verification status
- */
 export default function ContactInfoScreen({ navigation, route }) {
-  const contact = route?.params?.contact || {
-    name: 'Ghost_Fox',
-    nickname: 'Ghost_Fox',
-    cid: 'A7F3K9',
-    avatar: '👻',
-    onlineStatus: true,
-    verified: true,
-    fingerprints: ['A3F9', '28BC', '7D4E', 'F1C6'],
+  const contactParam = route?.params?.contact || {};
+  const { contacts, userCID, userNickname, userAvatar } = useCIDContext();
+  const contact = contacts.find(c => c.cid === contactParam.cid) || contactParam;
+  
+  // Real check: if no CID, we have no real contact data
+  if (!contact.cid) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            }
+          }} 
+          style={styles.backBtn}
+        >
+            <Ionicons name="arrow-back" size={20} color={COLORS.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Contact Info</Text>
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: COLORS.textMuted }}>Contact details not found</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const fingerprints = contact.fingerprints || ['----', '----', '----', '----'];
+
+  const [timer, setTimer] = useState(0);
+  const [isCallInitiating, setIsCallInitiating] = useState(false);
+  const userAvatarSafe = userAvatar || '👤';
+
+  const handleVoiceCall = async () => {
+    try {
+      setIsCallInitiating(true);
+      const callId = await signalingService.startCall(
+        { id: contact.cid, name: contact.name, avatar: contact.avatar },
+        { id: userCID, name: userNickname, avatar: userAvatarSafe },
+        "voice"
+      );
+      if (callId) {
+        navigation.navigate("VoiceCall");
+      }
+    } catch (err) {
+      console.error("Voice call initiation failed:", err);
+    } finally {
+      setIsCallInitiating(false);
+    }
+  };
+
+  const handleVideoCall = async () => {
+    try {
+      setIsCallInitiating(true);
+      const callId = await signalingService.startCall(
+        { id: contact.cid, name: contact.name, avatar: contact.avatar },
+        { id: userCID, name: userNickname, avatar: userAvatarSafe },
+        "video"
+      );
+      if (callId) {
+        navigation.navigate("VideoCall");
+      }
+    } catch (err) {
+      console.error("Video call initiation failed:", err);
+    } finally {
+      setIsCallInitiating(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (contact.roomId) {
+      messageStorage.getChatTimer(contact.roomId).then(setTimer);
+    }
+  }, [contact.roomId]);
+
+  const formatTimer = (ms) => {
+    if (!ms || ms === 0) return 'OFF';
+    const option = AUTO_DESTRUCT_OPTIONS.find(o => o.ms === ms);
+    if (option) return option.label;
+    
+    // Fallback formatting
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h`;
+    return `${Math.floor(s / 86400)}d`;
+  };
+
+  const handleTimerPress = () => {
+    Alert.alert(
+      "Temporary Messages",
+      "Messages in this chat will disappear after the selected duration. Setting a timer will also apply to existing messages in this chat.",
+      [
+        ...AUTO_DESTRUCT_OPTIONS.map(opt => ({
+          text: opt.label,
+          onPress: () => updateTimer(opt.ms)
+        })),
+        { text: "Cancel", style: "cancel" }
+      ]
+    );
+  };
+
+  const updateTimer = async (ms) => {
+    if (!contact.roomId) return;
+    const pruned = await messageStorage.saveChatTimer(contact.roomId, ms);
+    setTimer(ms);
+
+    // Sync prunes to server
+    if (pruned && pruned.length > 0) {
+      console.log(`[ContactInfo] Syncing ${pruned.length} retroactive prunes to server...`);
+      const rooms = [...new Set(pruned.map(p => p.roomId))];
+      for (const rid of rooms) {
+        const ids = pruned.filter(p => p.roomId === rid).map(p => p.id);
+        socketService.deleteMessagesBulk(rid, ids);
+      }
+    }
+  };
+
+  const handleBlockContact = () => {
+    Alert.alert(
+      "Block Contact",
+      `Are you sure you want to block ${contact.name}? They will no longer be able to message or call you.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Block", style: "destructive", onPress: () => {
+          // Block logic
+          if (navigation.canGoBack()) {
+            navigation.goBack();
+          }
+        }}
+      ]
+    );
   };
 
   return (
@@ -34,7 +161,14 @@ export default function ContactInfoScreen({ navigation, route }) {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity 
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            }
+          }} 
+          style={styles.backBtn}
+        >
           <Ionicons name="arrow-back" size={20} color={COLORS.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Contact Info</Text>
@@ -51,14 +185,20 @@ export default function ContactInfoScreen({ navigation, route }) {
         {/* Profile Section */}
         <View style={styles.profileSection}>
           <View style={styles.profileAvatar}>
-            <Text style={styles.avatarText}>{contact.avatar}</Text>
+            <View style={{ width: '100%', height: '100%', borderRadius: 40, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+              {contact.avatar && typeof contact.avatar === 'string' && (contact.avatar.startsWith('http') || contact.avatar.startsWith('file') || contact.avatar.startsWith('data:') || contact.avatar.startsWith('content')) ? (
+                <Image source={{ uri: contact.avatar }} style={{ width: '100%', height: '100%' }} />
+              ) : (
+                <Text style={styles.avatarText}>{contact.avatar || '👤'}</Text>
+              )}
+            </View>
             {contact.onlineStatus && (
               <View style={styles.onlineIndicator} />
             )}
           </View>
-          <Text style={styles.profileName}>{contact.name}</Text>
+          <Text style={styles.profileName}>{contact.nickname || contact.name || 'User'}</Text>
           <Text style={styles.profileStatus}>
-            {contact.onlineStatus ? '● Online now' : '● Offline'}
+            {contact.onlineStatus || contact.status === 'online' ? '● Online now' : '● Offline'}
           </Text>
         </View>
 
@@ -68,11 +208,19 @@ export default function ContactInfoScreen({ navigation, route }) {
             <MaterialCommunityIcons name="message" size={24} color={COLORS.primary} />
             <Text style={styles.actionLabel}>Message</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn}>
+          <TouchableOpacity 
+            style={[styles.actionBtn, isCallInitiating && { opacity: 0.5 }]} 
+            onPress={handleVoiceCall}
+            disabled={isCallInitiating}
+          >
             <MaterialCommunityIcons name="phone" size={24} color={COLORS.primary} />
             <Text style={styles.actionLabel}>Voice</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn}>
+          <TouchableOpacity 
+            style={[styles.actionBtn, isCallInitiating && { opacity: 0.5 }]} 
+            onPress={handleVideoCall}
+            disabled={isCallInitiating}
+          >
             <MaterialCommunityIcons name="video" size={24} color={COLORS.primary} />
             <Text style={styles.actionLabel}>Video</Text>
           </TouchableOpacity>
@@ -90,61 +238,29 @@ export default function ContactInfoScreen({ navigation, route }) {
           </View>
         </View>
 
-        {/* Verification Status */}
+        {/* Encryption & Security */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>VERIFY ENCRYPTION</Text>
+          <Text style={styles.sectionTitle}>PRIVACY & SECURITY</Text>
           
-          <TouchableOpacity style={styles.verifyCard}>
-            <View style={styles.verifyContent}>
-              <MaterialCommunityIcons name="check-all" size={24} color={COLORS.success} />
-              <View style={{ marginLeft: SPACING.md, flex: 1 }}>
-                <Text style={styles.verifyStatus}>Your fingerprints match</Text>
-                <Text style={styles.verifyDescription}>No interception · Secure</Text>
-              </View>
+          <TouchableOpacity style={styles.settingRow} onPress={handleTimerPress}>
+            <View style={styles.settingRowLeft}>
+              <MaterialCommunityIcons name="timer-outline" size={22} color={COLORS.primary} />
+              <Text style={styles.settingRowLabel}>Message Timer</Text>
             </View>
-            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+            <View style={styles.settingRowRight}>
+              <Text style={styles.settingRowValue}>{formatTimer(timer)}</Text>
+              <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+            </View>
           </TouchableOpacity>
+
+        {/* Encryption row removed as requested */}
         </View>
 
-        {/* Fingerprints */}
-        <View style={styles.section}>
-          <View style={styles.fingerprintHeader}>
-            <Text style={styles.sectionTitle}>{contact.name.toUpperCase()}'S FINGERPRINT</Text>
-            <TouchableOpacity>
-              <MaterialCommunityIcons name="content-copy" size={16} color={COLORS.primary} />
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.fingerprintGrid}>
-            {contact.fingerprints.map((fp, idx) => (
-              <View key={idx} style={styles.fingerprintItem}>
-                <Text style={styles.fingerprintValue}>{fp}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* Your Fingerprints */}
-        <View style={styles.section}>
-          <View style={styles.fingerprintHeader}>
-            <Text style={styles.sectionTitle}>YOUR FINGERPRINT</Text>
-            <TouchableOpacity>
-              <MaterialCommunityIcons name="content-copy" size={16} color={COLORS.primary} />
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.fingerprintGrid}>
-            {['A3F9', '28BC', '7D4E', 'F1C6'].map((fp, idx) => (
-              <View key={idx} style={styles.fingerprintItem}>
-                <Text style={styles.fingerprintValue}>{fp}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
+        {/* Fingerprints sections removed as requested */}
 
         {/* Actions */}
         <View style={styles.section}>
-          <TouchableOpacity style={styles.actionRow}>
+          <TouchableOpacity style={styles.actionRow} onPress={handleBlockContact}>
             <View style={[styles.actionRowIcon, { backgroundColor: COLORS.error + '15' }]}>
               <MaterialCommunityIcons name="block-helper" size={20} color={COLORS.error} />
             </View>
@@ -357,5 +473,35 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontWeight: '600',
     flex: 1,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
+    ...SHADOWS.sm,
+  },
+  settingRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  settingRowLabel: {
+    ...TYPOGRAPHY.body1,
+    color: COLORS.text,
+    fontWeight: '500',
+  },
+  settingRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  settingRowValue: {
+    ...TYPOGRAPHY.body2,
+    color: COLORS.primary,
+    fontWeight: '600',
   },
 });

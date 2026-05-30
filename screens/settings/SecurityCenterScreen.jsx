@@ -13,6 +13,7 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
 import { useSecurity } from '../../context/SecurityContext';
+import { Alert } from 'react-native';
 
 const { width: screenWidth } = Dimensions.get('screen');
 
@@ -28,10 +29,32 @@ export default function SecurityCenterScreen({ navigation }) {
     screenshotBlockEnabled, 
     toggleScreenshotBlock, 
     screenRecordingBlockEnabled, 
-    toggleScreenRecordingBlock 
+    toggleScreenRecordingBlock,
+    autoLockTimeout,
+    updateAutoLockTimeout
   } = useSecurity();
   const [autoLock, setAutoLock] = useState(true);
   const [wipeOnFail, setWipeOnFail] = useState(true);
+
+  const formatTimeout = (ms) => {
+    if (ms === 0) return 'NEVER';
+    if (ms < 60000) return `${ms / 1000} SEC`;
+    return `${ms / 60000} MIN`;
+  };
+
+  const handleAutoLockPress = () => {
+    Alert.alert(
+      "Auto-Lock Timeout",
+      "Choose inactivity period before app locks automatically.",
+      [
+        { text: "30 Seconds", onPress: () => updateAutoLockTimeout(30000) },
+        { text: "1 Minute", onPress: () => updateAutoLockTimeout(60000) },
+        { text: "5 Minutes", onPress: () => updateAutoLockTimeout(300000) },
+        { text: "Never", onPress: () => updateAutoLockTimeout(0) },
+        { text: "Cancel", style: "cancel" }
+      ]
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -156,11 +179,11 @@ export default function SecurityCenterScreen({ navigation }) {
               </View>
               <View style={styles.settingInfo}>
                 <Text style={styles.settingLabel}>Auto-Lock</Text>
-                <Text style={styles.settingDescription}>Lock after 1 minute</Text>
+                <Text style={styles.settingDescription}>Lock app after inactivity</Text>
               </View>
             </View>
-            <TouchableOpacity activeOpacity={0.7}>
-              <Text style={styles.settingValue}>1 MIN</Text>
+            <TouchableOpacity activeOpacity={0.7} onPress={handleAutoLockPress}>
+              <Text style={styles.settingValue}>{formatTimeout(autoLockTimeout)}</Text>
             </TouchableOpacity>
           </View>
 

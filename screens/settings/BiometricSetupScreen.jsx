@@ -221,7 +221,7 @@ export default function BiometricSetupScreen({ navigation }) {
       >
         <KeyboardAvoidingView 
           style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
         >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Confirm Password</Text>
@@ -237,7 +237,6 @@ export default function BiometricSetupScreen({ navigation }) {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
-                autoFocus
               />
             </View>
 

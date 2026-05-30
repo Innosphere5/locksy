@@ -11,34 +11,48 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../theme';
-import { useCalls } from '../../context/CallsContext';
+import useCallStore from '../../src/store/useCallStore';
+import signalingService from '../../src/services/signalingService';
+import rtcService from '../../src/services/rtcService';
 
 const { height, width } = Dimensions.get('window');
 
-export default function VoiceCallScreen({ navigation, route }) {
-  const { callInfo } = route?.params || {};
-  const { endCall, toggleMute, toggleSpeaker, isMuted, isSpeaker, updateCallDuration } = useCalls();
+export default function VoiceCallScreen({ navigation }) {
+  const { 
+    remoteUser, 
+    isMuted, 
+    isSpeaker, 
+    toggleMute, 
+    toggleSpeaker, 
+    startTime, 
+    callStatus,
+    resetCall,
+    endReason
+  } = useCallStore();
+  
   const [duration, setDuration] = useState(0);
-  const [showMoreOptions, setShowMoreOptions] = useState(false);
 
-  // Default call info
-  const call = callInfo || {
-    id: '1',
-    name: 'Ghost_Fox',
-    avatar: '🦊',
-    type: 'voice',
-    encrypted: true,
-    direction: 'incoming',
-  };
+  useEffect(() => {
+    // Only navigate away if the call was active and then ended or failed.
+    // We ignore 'idle' on mount to allow the call to start.
+    if (callStatus === 'ended' || callStatus === 'failed') {
+      const timeout = setTimeout(() => {
+        navigation.navigate('Chats');
+        resetCall();
+      }, 2000); // Small delay to show "Call Ended" status if we add it
+      return () => clearTimeout(timeout);
+    }
+  }, [callStatus]);
 
   // Timer effect
   useEffect(() => {
-    const interval = setInterval(() => {
-      setDuration((prev) => prev + 1);
-      updateCallDuration(duration + 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [duration]);
+    if (startTime) {
+      const interval = setInterval(() => {
+        setDuration(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [startTime]);
 
   // Format duration display (MM:SS)
   const formatDuration = (seconds) => {
@@ -47,9 +61,24 @@ export default function VoiceCallScreen({ navigation, route }) {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const handleEndCall = () => {
-    endCall();
-    navigation.navigate('Calls');
+  const handleEndCall = async () => {
+    await signalingService.endCall();
+    navigation.navigate('Chats');
+  };
+
+  const toggleMuteLocal = () => {
+    toggleMute();
+    rtcService.toggleMute(!isMuted);
+  };
+
+  const toggleSpeakerLocal = () => {
+    toggleSpeaker();
+    rtcService.setSpeaker(!isSpeaker);
+  };
+
+  const call = remoteUser || {
+    name: 'Unknown',
+    avatar: '👤',
   };
 
   return (
@@ -82,7 +111,16 @@ export default function VoiceCallScreen({ navigation, route }) {
           <Text style={styles.avatarEmoji}>{call.avatar}</Text>
         </View>
         <Text style={styles.callerName}>{call.name}</Text>
-        <Text style={styles.callDuration}>{formatDuration(duration)}</Text>
+        <Text style={styles.callDuration}>
+          {callStatus === 'ended' ? 
+            (endReason === 'busy' ? 'User is Busy' : 
+             endReason === 'no_answer' ? 'No Answer' : 
+             endReason === 'rejected' ? 'Call Declined' : 'Call Ended') 
+            : (callStatus === 'connected' ? formatDuration(duration) : 
+               callStatus === 'ringing' ? 'Ringing...' : 
+               callStatus === 'connecting' ? 'Connecting...' : 
+               'Calling...')}
+        </Text>
 
         {/* Encryption badge */}
         <View style={styles.encryptionBadge}>
@@ -111,7 +149,7 @@ export default function VoiceCallScreen({ navigation, route }) {
           {/* Mute button */}
           <TouchableOpacity
             style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
-            onPress={toggleMute}
+            onPress={toggleMuteLocal}
             activeOpacity={0.8}
           >
             <View
@@ -139,7 +177,7 @@ export default function VoiceCallScreen({ navigation, route }) {
           {/* Speaker button */}
           <TouchableOpacity
             style={[styles.controlBtn, isSpeaker && styles.controlBtnActive]}
-            onPress={toggleSpeaker}
+            onPress={toggleSpeakerLocal}
             activeOpacity={0.8}
           >
             <View
@@ -196,28 +234,6 @@ export default function VoiceCallScreen({ navigation, route }) {
             style={{ transform: [{ rotateZ: '135deg' }] }}
           />
         </TouchableOpacity>
-
-        {/* Additional options */}
-        {showMoreOptions && (
-          <View style={styles.moreOptions}>
-            <TouchableOpacity style={styles.moreOptionBtn} activeOpacity={0.7}>
-              <MaterialCommunityIcons
-                name="plus"
-                size={20}
-                color={COLORS.white}
-              />
-              <Text style={styles.moreOptionText}>Add</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.moreOptionBtn} activeOpacity={0.7}>
-              <MaterialCommunityIcons
-                name="transit-transfer"
-                size={20}
-                color={COLORS.white}
-              />
-              <Text style={styles.moreOptionText}>Transfer</Text>
-            </TouchableOpacity>
-          </View>
-        )}
       </View>
 
       {/* Call info footer */}

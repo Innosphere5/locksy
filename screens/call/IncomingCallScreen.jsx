@@ -11,23 +11,22 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SPACING, RADIUS } from '../../theme';
-import { useCalls } from '../../context/CallsContext';
+import useCallStore from '../../src/store/useCallStore';
+import signalingService from '../../src/services/signalingService';
 
 const { height } = Dimensions.get('window');
 
 export default function IncomingCallScreen({ navigation, route }) {
-  const { acceptCall, declineCall } = useCalls();
-  const { caller } = route?.params || {};
+  const { remoteUser, callType, callId, resetCall, callStatus } = useCallStore();
   const [pulseAnimation] = useState(new Animated.Value(0));
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  // Default caller if not provided
-  const callInfo = caller || {
-    id: '1',
-    name: 'Ghost_Fox',
-    avatar: '🦊',
-    type: 'voice',
-    encrypted: true,
-  };
+  useEffect(() => {
+    // If call ended or failed while on this screen, go back
+    if (callStatus === 'ended' || callStatus === 'failed' || callStatus === 'idle') {
+      navigation.goBack();
+    }
+  }, [callStatus]);
 
   // Animate ring pulse
   useEffect(() => {
@@ -47,14 +46,37 @@ export default function IncomingCallScreen({ navigation, route }) {
     ).start();
   }, [pulseAnimation]);
 
-  const handleAccept = () => {
-    acceptCall();
-    navigation.replace('VoiceCall', { callInfo });
+  const handleAccept = async () => {
+    if (callId && !isProcessing) {
+      setIsProcessing(true);
+      try {
+        await signalingService.acceptCall();
+        const nextScreen = callType === 'video' ? 'VideoCall' : 'VoiceCall';
+        navigation.replace(nextScreen);
+      } catch (err) {
+        console.error("Failed to accept call:", err);
+        setIsProcessing(false);
+      }
+    }
   };
 
-  const handleDecline = () => {
-    declineCall();
-    navigation.goBack();
+  const handleDecline = async () => {
+    if (callId && !isProcessing) {
+      setIsProcessing(true);
+      try {
+        signalingService.rejectCall();
+        navigation.goBack();
+      } catch (err) {
+        console.error("Failed to reject call:", err);
+        setIsProcessing(false);
+      }
+    }
+  };
+
+  const callInfo = remoteUser || {
+    name: 'Unknown',
+    avatar: '👤',
+    type: callType || 'voice',
   };
 
   const pulseScale = pulseAnimation.interpolate({
@@ -128,10 +150,10 @@ export default function IncomingCallScreen({ navigation, route }) {
         <View style={styles.callTypeContainer}>
           <View style={styles.callTypeBadge}>
             <Text style={styles.callTypeIcon}>
-              {callInfo.type === 'voice' ? '🎤' : '📹'}
+              {callType === 'voice' ? '🎤' : '📹'}
             </Text>
             <Text style={styles.callTypeText}>
-              {callInfo.type === 'voice' ? 'Voice Call' : 'Video Call'}
+              {callType === 'voice' ? 'Voice Call' : 'Video Call'}
             </Text>
           </View>
         </View>

@@ -112,7 +112,7 @@ export default function SetupMasterPassword({ navigation }) {
         "[SetupMasterPassword] Identity setup complete, navigating...",
       );
       // Navigate and show CID popup after setup
-      navigation.navigate("ShowCID");
+      navigation.replace("ShowCID");
     } catch (error) {
       console.error("[SetupMasterPassword] initializeCID failed:", error);
       Alert.alert(

@@ -11,6 +11,7 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SHADOWS } from '../../theme';
 import { useGroups } from '../../context/GroupsContext';
+import * as RootNavigation from '../../src/utils/navigation';
 
 export default function GroupInviteModal() {
   const { groupInvites, acceptGroupInvite, rejectGroupInvite } = useGroups();
@@ -64,7 +65,14 @@ export default function GroupInviteModal() {
               
               <TouchableOpacity 
                 style={styles.acceptBtn}
-                onPress={() => acceptGroupInvite(currentInvite)}
+                onPress={async () => {
+                  await acceptGroupInvite(currentInvite);
+                  // Redirect to group chat
+                  RootNavigation.navigate('GroupChat', {
+                    groupId: currentInvite.groupId,
+                    groupName: currentInvite.groupName
+                  });
+                }}
               >
                 <Text style={styles.acceptBtnText}>Join Group</Text>
               </TouchableOpacity>

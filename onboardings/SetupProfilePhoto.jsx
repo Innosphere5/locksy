@@ -15,8 +15,8 @@ import { useCIDContext } from '../context/CIDContext';
 import { COLORS, SPACING, RADIUS } from './theme';
 
 export default function SetupProfilePhoto({ navigation, route }) {
-  const { nickname = 'User', cid = 'XXXXXX' } = route?.params || {};
-  const { updateNickname, updateAvatar } = useCIDContext();
+  const { nickname = 'User' } = route?.params || {};
+  const { userCID, updateNickname, updateAvatar } = useCIDContext();
   const [photo, setPhoto] = useState(null);
   const [loading, setLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -108,12 +108,12 @@ export default function SetupProfilePhoto({ navigation, route }) {
 
     Alert.alert(
       '🎉 Welcome to Locksy!',
-      `Your account is ready, ${nickname}.\n\nYour CID: ${cid}`,
+      `Your account is ready, ${nickname}.\n\nYour CID: ${userCID}`,
       [
         {
           text: 'Enter',
           onPress: () => {
-             navigation.replace('Chats');
+             navigation.reset({ index: 0, routes: [{ name: 'Chats' }] });
           },
         },
       ]

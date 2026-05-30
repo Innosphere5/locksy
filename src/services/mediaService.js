@@ -103,6 +103,12 @@ class MediaService {
       const fullUrl = `${API_BASE_URL}/api/media/upload-url`;
       const safeName = (name || `upload-${Date.now()}`).replace(/[\\"]/g, '_');
 
+      console.log('[MediaService] Sending to server:', {
+        fileName: safeName,
+        fileType: fileType,
+        fileSize: size,
+        userId,
+      });
       const { data: { uploadUrl, fileUrl, key } } = await axios.post(fullUrl, {
         fileName: safeName,
         fileType: fileType,
@@ -125,17 +131,19 @@ class MediaService {
         }
       });
 
-      console.log('[MediaService] S3 Response Status:', response.status);
-
       if (!response.ok) {
+        const errBody = await response.text();
+        console.error('[MediaService] S3 Upload failed response:', response.status, errBody);
         throw new Error(`S3 Upload Failed with status: ${response.status}`);
       }
 
+      console.log('[MediaService] S3 Response Status:', response.status);
       return { fileUrl, key, type: fileType, size };
     } catch (error) {
       console.error('[MediaService] Upload failed:', error);
       throw error;
     }
+
   }
 
   /**

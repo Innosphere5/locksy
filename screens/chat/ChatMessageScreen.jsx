@@ -20,6 +20,7 @@ import {
   Vibration,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -39,6 +40,7 @@ import { setChatLock, clearChatLock, getChatLockStatus } from '../../utils/secur
 import mediaService from '../../src/services/mediaService';
 import { uploadE2EEFile, downloadAndDecryptFile } from '../../utils/e2eeFileService';
 import { deriveSharedSecret } from '../../utils/cryptoEngine';
+import signalingService from '../../src/services/signalingService';
 
 // ============================================================================
 // RESPONSIVE UTILITY FUNCTIONS
@@ -72,6 +74,22 @@ const getMessageBubbleMaxWidth = (screenWidth, isSelected = false) => {
   const padding = isSelected ? 80 : 60; // Space for checkbox + padding if needed
   const maxWidthPercent = screenWidth > 768 ? 0.6 : 0.75; // 60% on tablet, 75% on mobile
   return screenWidth * maxWidthPercent - padding;
+};
+
+/**
+ * Ensure a URI is properly formatted for React Native components
+ * Fixes "black image" and "audio ENOENT" issues by adding file:// prefix to raw paths
+ */
+const ensureUri = (uri) => {
+  if (!uri) return null;
+  if (typeof uri !== 'string') return uri;
+  if (uri.startsWith('http') || uri.startsWith('data:') || uri.startsWith('file:') || uri.startsWith('content:')) {
+    return uri;
+  }
+  if (uri.startsWith('/')) {
+    return `file://${uri}`;
+  }
+  return uri;
 };
 
 // ============================================================================
@@ -195,8 +213,9 @@ function VoiceMessagePlayer({ uri, durationText, isSent, screenWidth }) {
       }
     } else {
       try {
+        const soundUri = ensureUri(uri);
         const { sound: newSound } = await Audio.Sound.createAsync(
-          uri.startsWith('data:') || uri.startsWith('http') || uri.startsWith('file') ? { uri } : { uri: `data:audio/m4a;base64,${uri}` },
+          { uri: soundUri },
           { shouldPlay: true },
           (status) => {
             if (status.isLoaded) {
@@ -310,7 +329,7 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
       {/* Avatar for received messages */}
       {!isSent && (
         <View style={[styles.smallAvatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, overflow: 'hidden' }]}>
-          {msg.avatar && msg.avatar.startsWith('http') || msg.avatar.startsWith('file') || msg.avatar.startsWith('content') ? (
+          {msg.avatar && typeof msg.avatar === 'string' && (msg.avatar.startsWith('http') || msg.avatar.startsWith('file') || msg.avatar.startsWith('data:') || msg.avatar.startsWith('content')) ? (
             <Image source={{ uri: msg.avatar }} style={{ width: avatarSize, height: avatarSize }} />
           ) : (
             <Text style={{ fontSize: responsiveFontSize(16, screenWidth) }}>{msg.avatar || '👤'}</Text>
@@ -356,11 +375,21 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
             { maxWidth: bubbleMaxWidth }
           ]}
         >
+          {/* Reply Quote */}
+          {msg.replyTo && (
+            <QuoteBox msg={msg.replyTo} screenWidth={screenWidth} isSent={isSent} />
+          )}
+
           {/* Forwarded indicator */}
           {msg.isForwarded && (
             <View style={styles.forwardedIndicator}>
-              <Text style={{ fontSize: responsiveFontSize(12, screenWidth) }}>📤</Text>
-              <Text style={[styles.forwardedText, { fontSize: responsiveFontSize(11, screenWidth) }]}>
+              <Ionicons name="share-social" size={12} color={isSent ? "rgba(255,255,255,0.7)" : COLORS.gray500} />
+              <Text style={[styles.forwardedText, {
+                fontSize: responsiveFontSize(11, screenWidth),
+                color: isSent ? "rgba(255,255,255,0.7)" : COLORS.gray500,
+                fontStyle: 'italic',
+                fontWeight: '500',
+              }]}>
                 Forwarded
               </Text>
             </View>
@@ -378,6 +407,7 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => !msg.isOpened && onViewOncePress && onViewOncePress(msg)}
+              onLongPress={() => onLongPress(msg)}
               style={styles.viewOnceContainer}
             >
               <Text style={{ fontSize: responsiveFontSize(16, screenWidth) }}>
@@ -398,37 +428,50 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
               </Text>
             </TouchableOpacity>
           ) : msg.type === 'video' ? (
-            <View style={[styles.imageContainer, { width: bubbleMaxWidth, height: bubbleMaxWidth * 0.75, backgroundColor: '#000' }]}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onLongPress={() => onLongPress(msg)}
+              style={[styles.imageContainer, { width: bubbleMaxWidth, height: bubbleMaxWidth * 0.75, backgroundColor: '#000' }]}
+            >
               <Video
-                source={{ uri: msg.videoUri }}
+                source={{ uri: ensureUri(msg.videoUri) }}
                 style={{ width: '100%', height: '100%', borderRadius: RADIUS.md }}
                 useNativeControls
                 resizeMode={ResizeMode.CONTAIN}
               />
-            </View>
+            </TouchableOpacity>
           ) : msg.type === 'image' ? (
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => onImagePress && onImagePress(msg.image)}
+              onLongPress={() => onLongPress(msg)}
               style={styles.imageContainer}
             >
-              <Image
-                source={{ uri: msg.image }}
-                style={[
-                  styles.bubbleImage,
-                  {
-                    width: bubbleMaxWidth,
-                    height: bubbleMaxWidth * 0.75,
-                    borderRadius: RADIUS.md
-                  }
-                ]}
-                resizeMode="cover"
-              />
+              <View style={{ position: 'relative' }}>
+                <Image
+                  source={{ uri: ensureUri(msg.image) }}
+                  style={[
+                    styles.bubbleImage,
+                    {
+                      width: bubbleMaxWidth,
+                      height: bubbleMaxWidth * 0.75,
+                      borderRadius: RADIUS.md
+                    }
+                  ]}
+                  resizeMode="cover"
+                />
+                {!msg.image && (
+                  <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.05)' }]}>
+                    <ActivityIndicator color={isSent ? "#FFF" : COLORS.primary} />
+                  </View>
+                )}
+              </View>
             </TouchableOpacity>
           ) : msg.type === 'file' ? (
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => onFilePress && onFilePress(msg)}
+              onLongPress={() => onLongPress(msg)}
               style={styles.fileContainer}
             >
               <View style={styles.fileIconBox}>
@@ -496,14 +539,50 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
             {msg.time}
           </Text>
           {msg.readStatus && (
-            <Text style={[styles.readStatus, { fontSize: smallFontSize }]}>
-              {msg.readStatus === 'double-check' && '✓✓'}
-              {msg.readStatus === 'check' && '✓'}
-              {msg.readStatus === 'sent' && '✓'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={[
+                styles.readStatus,
+                {
+                  fontSize: smallFontSize,
+                  color: msg.readStatus === 'failed' ? COLORS.error : (msg.readStatus === 'read' ? '#38BDF8' : COLORS.primary)
+                }
+              ]}>
+                {msg.readStatus === 'sent' ? '✓' :
+                  (msg.readStatus === 'delivered' || msg.readStatus === 'read' || msg.readStatus === 'double-check') ? '✓✓' :
+                    msg.readStatus === 'sending' ? '...' : '✓'}
+                {msg.readStatus === 'failed' && ' !'}
+              </Text>
+              {msg.readStatus === 'failed' && (
+                <TouchableOpacity onPress={() => onResend && onResend(msg)}>
+                  <Ionicons name="refresh" size={14} color={COLORS.error} />
+                </TouchableOpacity>
+              )}
+            </View>
           )}
         </View>
       )}
+    </View>
+  );
+}
+
+function QuoteBox({ msg, screenWidth, isSent }) {
+  if (!msg) return null;
+  const fontSize = responsiveFontSize(12, screenWidth);
+
+  return (
+    <View style={[
+      styles.quoteBox,
+      { backgroundColor: isSent ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.05)' }
+    ]}>
+      <View style={styles.quoteLine} />
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.quoteSender, { fontSize: fontSize - 1, color: isSent ? COLORS.white : COLORS.primary }]} numberOfLines={1}>
+          {msg.senderNickname || 'User'}
+        </Text>
+        <Text style={[styles.quoteText, { fontSize: fontSize, color: isSent ? 'rgba(255,255,255,0.8)' : COLORS.slate600 }]} numberOfLines={1}>
+          {msg.type === 'image' ? '📷 Photo' : (msg.type === 'video' ? '📹 Video' : (msg.type === 'voice' ? '🎤 Voice' : (msg.type === 'file' ? '📄 File' : msg.text)))}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -956,7 +1035,8 @@ export default function ChatMessageScreen({ navigation, route }) {
   const contactName = route?.params?.contactName || 'Chat';
   const contactCID = route?.params?.contactCID;
   const contactAvatarParam = route?.params?.contactAvatar;
-  const contactStatus = 'Online';
+  const partnerInContext = contacts.find(c => c.cid === contactCID);
+  const [contactStatus, setContactStatus] = useState('Offline');
 
   // Avatar fallbacks - ensure these are always strings
   const getAvatar = (avatar) => {
@@ -966,7 +1046,7 @@ export default function ChatMessageScreen({ navigation, route }) {
     return '👤'; // Default fallback
   };
 
-  const contactAvatar = getAvatar(contactAvatarParam);
+  const contactAvatar = getAvatar(partnerInContext?.avatar || contactAvatarParam);
   const userAvatarSafe = getAvatar(userAvatar);
 
   // State management
@@ -976,6 +1056,8 @@ export default function ChatMessageScreen({ navigation, route }) {
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedMessageId, setSelectedMessageId] = useState(null);
+  const [isCallInitiating, setIsCallInitiating] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
   const [showAttachMediaModal, setShowAttachMediaModal] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -1004,25 +1086,76 @@ export default function ChatMessageScreen({ navigation, route }) {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingTimerRef = useRef(null);
 
+  // Reply State
+  const [replyTo, setReplyTo] = useState(null);
+
   // E2EE Session Key
   const [sessionKey, setSessionKey] = useState(null);
 
   useEffect(() => {
     const deriveKey = async () => {
       if (!contactCID || !identityPrivKeyRef.current) return;
-      const partner = contacts.find(c => c.cid === contactCID);
-      if (partner && partner.publicKey) {
+      if (partnerInContext) {
+        setContactStatus(partnerInContext.status === 'online' ? 'Online' : 'Offline');
+      }
+
+      if (partnerInContext && partnerInContext.publicKey) {
         try {
-          const key = await deriveSharedSecret(identityPrivKeyRef.current, partner.publicKey);
+          const key = await deriveSharedSecret(identityPrivKeyRef.current, partnerInContext.publicKey);
           setSessionKey(key);
           console.log("[ChatMessage] E2EE Session Key derived");
-        } catch (err) {
-          console.error("[ChatMessage] Failed to derive session key:", err);
+        } catch (e) {
+          console.error("[ChatMessage] Key derivation failed:", e);
         }
       }
     };
     deriveKey();
-  }, [contacts, contactCID, isFocused]);
+  }, [contactCID, identityPrivKeyRef, contacts]);
+
+  // Subscribe to real-time status updates
+  useEffect(() => {
+    if (!contactCID) return;
+
+    const onStatusUpdate = (data) => {
+      if (data.cid === contactCID) {
+        console.log(`[ChatMessage] Status update for ${contactCID}: ${data.status}`);
+        setContactStatus(data.status === 'online' ? 'Online' : 'Offline');
+      }
+    };
+
+    const unsubscribe = socketService.on("user:status", onStatusUpdate);
+    return () => unsubscribe();
+  }, [contactCID]);
+
+  // Periodic pruning of messages while in chat
+  useEffect(() => {
+    if (!roomId) return;
+
+    const prune = async () => {
+      const pruned = await messageStorage.pruneExpiredMessages();
+
+      if (pruned && pruned.length > 0) {
+        console.log(`[ChatMessage] Syncing ${pruned.length} local prunes to server...`);
+        // Group by roomId and sync
+        const rooms = [...new Set(pruned.map(p => p.roomId))];
+        for (const rid of rooms) {
+          const ids = pruned.filter(p => p.roomId === rid).map(p => p.id);
+          socketService.deleteMessagesBulk(rid, ids);
+        }
+
+        // Reload messages to reflect deletion in current room
+        const currentPrunedCount = pruned.filter(p => p.roomId === roomId).length;
+        if (currentPrunedCount > 0) {
+          const stored = await messageStorage.getMessages(roomId);
+          setMessages(stored.map(m => formatSocketMsg(m)));
+        }
+      }
+    };
+
+    const interval = setInterval(prune, 30000); // Check every 30s
+    prune(); // Check immediately on focus
+    return () => clearInterval(interval);
+  }, [roomId]);
 
   // --- AUTOMATIC DECRYPTION FOR E2EE MEDIA ---
   useEffect(() => {
@@ -1034,9 +1167,10 @@ export default function ChatMessageScreen({ navigation, route }) {
         // If it's E2EE, has a media_id, but hasn't been decrypted locally yet
         if (msg.is_e2ee && msg.media_id && !msg.decryptedUri && !msg.isOpened) {
           try {
-            console.log(`[ChatMessage] Decrypting E2EE media for message: ${msg.id}`);
+            console.log(`[ChatMessage] Decrypting E2EE media for message: ${msg.id} (media_id: ${msg.media_id})`);
             const localUri = await downloadAndDecryptFile(sessionKey, { id: msg.media_id });
             if (localUri) {
+              console.log(`[ChatMessage] Successfully decrypted ${msg.id} -> ${localUri}`);
               needsUpdate = true;
               const decryptedMsg = {
                 ...msg,
@@ -1056,7 +1190,7 @@ export default function ChatMessageScreen({ navigation, route }) {
               return decryptedMsg;
             }
           } catch (err) {
-            console.error(`[ChatMessage] Failed to decrypt message ${msg.id}:`, err);
+            console.error(`[ChatMessage] Failed to decrypt message ${msg.id} (media_id: ${msg.media_id}):`, err);
           }
         }
         return msg;
@@ -1097,13 +1231,36 @@ export default function ChatMessageScreen({ navigation, route }) {
 
         // 3. Sync with server for any missed messages
         const history = await socketService.getChatHistory(roomId);
-        if (history && history.messages && isMounted) {
-          const formatted = history.messages.map(m => formatSocketMsg(m));
-          setMessages(formatted);
-          // Save to local storage (duplicates handled by saveMessage)
-          for (const m of history.messages) {
-            await messageStorage.saveMessage(roomId, m);
+        const historyMessages = history.messages || [];
+
+        // PROACTIVE FILTERING: Don't show or save messages that should have expired
+        const timerMs = await messageStorage.getChatTimer(roomId);
+        const now = Date.now();
+        const validHistory = historyMessages.filter(m => {
+          const timestamp = new Date(m.timestamp).getTime();
+          if (timerMs > 0 && (now - timestamp > timerMs)) {
+            console.log(`[ChatMessage] Skipping expired history message: ${m.id}`);
+            return false;
           }
+          return true;
+        });
+
+        const formatted = validHistory.map(m => formatSocketMsg(m));
+
+        setMessages(prev => {
+          const combined = [...prev, ...formatted];
+          // Robust Deduplication
+          const seen = new Set();
+          return combined.filter(m => {
+            if (seen.has(m.id)) return false;
+            seen.add(m.id);
+            return true;
+          }).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        });
+
+        // Save to local storage
+        for (const m of validHistory) {
+          await messageStorage.saveMessage(roomId, m);
         }
       } catch (err) {
         console.warn("[ChatMessage] Sync/Join failed:", err);
@@ -1124,7 +1281,9 @@ export default function ChatMessageScreen({ navigation, route }) {
             onUnlockSuccess: () => {
               setIsLockedOnEntry(false);
               setIsUnlockedForSession(true);
-              navigation.goBack();
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              }
             }
           });
         }
@@ -1138,6 +1297,20 @@ export default function ChatMessageScreen({ navigation, route }) {
     const unsubReceived = socketService.on("message:received", (message) => {
       if (isMounted && message.roomId === roomId) {
         const newMsg = formatSocketMsg(message);
+
+        // --- STATUS: Emit DELIVERED ---
+        if (newMsg.sender === 'received') {
+          socketService.emitMessageDelivered(roomId, null, newMsg.id);
+
+          // If we are focused, also emit READ
+          if (isFocused) {
+            socketService.emitMessageRead(roomId, null, newMsg.id);
+            newMsg.readStatus = 'read'; // Local optimization
+          } else {
+            newMsg.readStatus = 'delivered'; // Local optimization
+          }
+        }
+
         setMessages(prev => {
           // 1. Precise Deduplication
           if (prev.find(m => m.id === newMsg.id)) return prev;
@@ -1148,7 +1321,7 @@ export default function ChatMessageScreen({ navigation, route }) {
             for (let i = prev.length - 1; i >= 0; i--) {
               const m = prev[i];
               if (
-                m.id.startsWith('temp-') &&
+                (m.id.startsWith('temp-') || m.id.startsWith('voice-')) &&
                 m.type === newMsg.type &&
                 m.text === newMsg.text
               ) {
@@ -1180,6 +1353,12 @@ export default function ChatMessageScreen({ navigation, route }) {
     const unsubDeleted = socketService.on("message:deleted", (data) => {
       if (isMounted && data.roomId === roomId) {
         setMessages(prev => prev.filter(m => m.id !== data.messageId));
+      }
+    });
+
+    const unsubBulk = socketService.on("message:deleted_bulk", (data) => {
+      if (isMounted && data.roomId === roomId) {
+        setMessages(prev => prev.filter(m => !data.messageIds.includes(m.id)));
       }
     });
 
@@ -1219,14 +1398,66 @@ export default function ChatMessageScreen({ navigation, route }) {
       }
     });
 
+    const unsubStatus = socketService.on("message:status:update", (data) => {
+      if (isMounted && data.roomId === roomId) {
+        setMessages(prev => prev.map(m => {
+          if (m.id === data.messageId) {
+            return { ...m, readStatus: data.status };
+          }
+          return m;
+        }));
+      }
+    });
+
+    const unsubSent = socketService.on("message:sent", (data) => {
+      if (isMounted && data.roomId === roomId) {
+        setMessages(prev => prev.map(m => {
+          if (m.id === data.tempId || m.id === data.id) {
+            return { ...m, id: data.id, readStatus: 'sent' };
+          }
+          return m;
+        }));
+      }
+    });
+
     return () => {
       isMounted = false;
       unsubReceived();
       unsubDeleted();
+      unsubBulk();
       unsubReact();
       unsubOpened();
+      unsubStatus();
+      unsubSent();
+
+      // CRITICAL: Leave the socket room so push notifications can trigger
+      if (roomId) {
+        socketService.leaveRoom(roomId);
+        console.log("[ChatMessage] Left room:", roomId);
+      }
     };
+
   }, [roomId, navigation]);
+
+  // Mark as read when screen is focused
+  useEffect(() => {
+    if (isFocused && roomId && messages.length > 0) {
+      const unreadMessages = messages.filter(m => m.sender === 'received' && m.readStatus !== 'read');
+      if (unreadMessages.length > 0) {
+        console.log(`[ChatMessage] Marking ${unreadMessages.length} messages as read`);
+        unreadMessages.forEach(m => {
+          socketService.emitMessageRead(roomId, null, m.id);
+        });
+
+        setMessages(prev => prev.map(m => {
+          if (m.sender === 'received' && m.readStatus !== 'read') {
+            return { ...m, readStatus: 'read' };
+          }
+          return m;
+        }));
+      }
+    }
+  }, [isFocused, roomId, messages.length]);
 
 
 
@@ -1252,21 +1483,36 @@ export default function ChatMessageScreen({ navigation, route }) {
 
     const isOpened = message.isOpened || (isMedia && msgData.isOpened);
 
+    const isSentByMe = isSent;
+    const mediaId = message.media_id || (isMedia && msgData.media_id) || message.id; // Fallback to id only if it's not a temp ID
+    const safeMediaId = (mediaId && !mediaId.startsWith('temp-') && !mediaId.startsWith('voice-')) ? mediaId : (isMedia && msgData.media_id);
+
     return {
       id: message.id,
       sender: isSent ? 'sent' : 'received',
       text: (isViewOnce && actualType === 'text') ? (isOpened ? null : (msgData.text || '')) : ((isImage || isFile || isVoice || isVideo || (isViewOnce && actualType !== 'text')) ? '' : (typeof msgData === 'object' ? msgData.text : msgData)),
-      image: !isOpened && (isImage || (isViewOnce && actualType === 'image')) ? msgData.uri || msgData.image || msgData.photo : null,
-      fileUri: !isOpened && (isFile || (isViewOnce && actualType === 'file')) ? msgData.uri || msgData.fileUri : null,
+
+      // If it's media and not sent by me, we should NOT use the URI from the payload (it's the sender's local path)
+      // unless it's a web URL (http).
+      image: (!isOpened && (isImage || (isViewOnce && actualType === 'image')))
+        ? ((isSentByMe || (msgData.uri && msgData.uri.startsWith('http'))) ? (msgData.uri || msgData.image || msgData.photo) : null)
+        : null,
+      fileUri: (!isOpened && (isFile || (isViewOnce && actualType === 'file')))
+        ? ((isSentByMe || (msgData.uri && msgData.uri.startsWith('http'))) ? (msgData.uri || msgData.fileUri) : null)
+        : null,
       fileName: isFile || (isViewOnce && actualType === 'file') ? msgData.name : null,
       fileSize: isFile || (isViewOnce && actualType === 'file') ? msgData.size : null,
       mimeType: isFile || (isViewOnce && actualType === 'file') ? msgData.mimeType : null,
-      voiceUri: !isOpened && (isVoice || (isViewOnce && actualType === 'voice')) ? msgData.uri || msgData.voiceUri : null,
+      voiceUri: (!isOpened && (isVoice || (isViewOnce && actualType === 'voice')))
+        ? ((isSentByMe || (msgData.uri && msgData.uri.startsWith('http'))) ? (msgData.uri || msgData.voiceUri) : null)
+        : null,
       duration: isVoice || (isViewOnce && actualType === 'voice') ? msgData.duration : null,
-      videoUri: !isOpened && (isVideo || (isViewOnce && actualType === 'video')) ? msgData.uri || msgData.videoUri : null,
+      videoUri: (!isOpened && (isVideo || (isViewOnce && actualType === 'video')))
+        ? ((isSentByMe || (msgData.uri && msgData.uri.startsWith('http'))) ? (msgData.uri || msgData.videoUri) : null)
+        : null,
+
       time: new Date(message.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      createdAt: message.createdAt ||
-        (message.timestamp ? new Date(message.timestamp).getTime() : Date.now()),
+      createdAt: message.createdAt || (message.timestamp ? new Date(message.timestamp).getTime() : Date.now()),
       type: isViewOnce ? 'view-once' : actualType,
       originalType: actualType,
       isViewOnce: isViewOnce,
@@ -1281,7 +1527,9 @@ export default function ChatMessageScreen({ navigation, route }) {
       expiresAt: message.expiresAt || (isMedia && msgData.expiresAt) ||
         ((message.timerMs || (isMedia && msgData.timerMs)) ? (Date.now() + (message.timerMs || msgData.timerMs)) : null),
       is_e2ee: message.is_e2ee || (isMedia && msgData.is_e2ee),
-      media_id: message.media_id || (isMedia && msgData.media_id),
+      media_id: safeMediaId,
+      replyTo: message.replyTo || (isMedia && msgData.replyTo),
+      readStatus: isSent ? (message.status || 'delivered') : undefined,
     };
   };
 
@@ -1300,13 +1548,13 @@ export default function ChatMessageScreen({ navigation, route }) {
       // Extract the URI / data from various message shapes
       const msgData = msg.message && typeof msg.message === 'object' ? msg.message : msg;
       const isImage = type === 'image' || (msgData.originalType === 'photo');
-      
+
       // For E2EE messages, we MUST use the decrypted local URI
       const isE2EE = msg.is_e2ee || msgData.is_e2ee;
-      const uri = isE2EE 
-        ? (msg.decryptedUri || msgData.decryptedUri) 
+      const uri = isE2EE
+        ? (msg.decryptedUri || msgData.decryptedUri)
         : (msgData.uri || msgData.image || msg.image || msg.videoUri || msg.fileUri || msg.voiceUri);
-      
+
       if (!uri) {
         if (isE2EE) console.log("[ChatMessage] Skipping vault save for E2EE item (not yet decrypted)");
         return;
@@ -1385,9 +1633,7 @@ export default function ChatMessageScreen({ navigation, route }) {
         break;
 
       case 'reply':
-        if (selectedMsg && selectedMsg.text) {
-          setInputText(`> ${selectedMsg.text}\n\n`);
-        }
+        setReplyTo(selectedMsg);
         break;
 
       case 'copy':
@@ -1440,32 +1686,65 @@ export default function ChatMessageScreen({ navigation, route }) {
       sender: 'sent',
       text: isViewOnce ? 'Sent a view-once message' : messageText,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      createdAt: Date.now(), // CRITICAL for cleanup interval
+      createdAt: Date.now(),
       type: isViewOnce ? 'view-once' : 'text',
       originalType: 'text',
       isViewOnce: isViewOnce,
       readStatus: 'sending',
       avatar: userAvatarSafe,
+      replyTo: replyTo ? {
+        id: replyTo.id,
+        text: replyTo.text,
+        type: replyTo.type,
+        senderNickname: replyTo.senderNickname || (replyTo.sender === 'sent' ? userNickname : contactName)
+      } : null
     };
 
     setMessages(prev => [...prev, tempMsg]);
     setInputText('');
-    setIsViewOnceText(false); // Reset
+    setIsViewOnceText(false);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
 
     try {
-
-
       const payload = {
         type: isViewOnce ? 'view-once' : 'text',
         originalType: 'text',
         isViewOnce: isViewOnce,
         text: messageText,
+        replyTo: tempMsg.replyTo
+      };
+
+      socketService.sendMessage(roomId, payload, userNickname, userAvatarSafe);
+      setReplyTo(null);
+    } catch (error) {
+      console.error("[ChatMessage] Error sending message:", error);
+      setMessages(prev => prev.map(m => m.id === tempMsg.id ? { ...m, readStatus: 'failed' } : m));
+    }
+  };
+
+  const handleResendMessage = async (msg) => {
+    try {
+      // Remove from failed state
+      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, readStatus: 'sending' } : m));
+
+      const payload = {
+        type: msg.type,
+        originalType: msg.originalType || msg.type,
+        isViewOnce: msg.isViewOnce,
+        text: msg.text,
+        replyTo: msg.replyTo,
+        image: msg.image,
+        videoUri: msg.videoUri,
+        fileUri: msg.fileUri,
+        voiceUri: msg.voiceUri,
+        media_id: msg.media_id,
+        is_e2ee: msg.is_e2ee
       };
 
       socketService.sendMessage(roomId, payload, userNickname, userAvatarSafe);
     } catch (error) {
-      console.error("[ChatMessage] Error sending message:", error);
+      console.error("[ChatMessage] Error resending message:", error);
+      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, readStatus: 'failed' } : m));
     }
   };
 
@@ -1476,6 +1755,28 @@ export default function ChatMessageScreen({ navigation, route }) {
         socketService.deleteMessage(roomId, selectedMsg.id);
       }
 
+      // PHYSICAL FILE DELETION
+      try {
+        const urisToDelete = [
+          selectedMsg.image,
+          selectedMsg.videoUri,
+          selectedMsg.fileUri,
+          selectedMsg.voiceUri,
+          selectedMsg.decryptedUri
+        ].filter(uri => uri && typeof uri === 'string' && (uri.startsWith('file://') || uri.startsWith('/')));
+
+        for (const uri of urisToDelete) {
+          const path = uri.startsWith('file://') ? uri : `file://${uri}`;
+          const info = await FileSystem.getInfoAsync(path);
+          if (info.exists) {
+            await FileSystem.deleteAsync(path, { idempotent: true });
+            console.log(`[ChatMessage] Physically deleted file: ${path}`);
+          }
+        }
+      } catch (err) {
+        console.warn("[ChatMessage] Physical file deletion failed:", err);
+      }
+
       // Delete from local storage
       await messageStorage.deleteMessage(roomId, selectedMsg.id);
 
@@ -1484,7 +1785,6 @@ export default function ChatMessageScreen({ navigation, route }) {
       );
       setSelectedMsg(null);
       setShowDeleteDialog(false);
-      // alert(`Message deleted ${type === 'everyone' ? 'for everyone' : 'for you'}`);
     }
   };
 
@@ -1492,6 +1792,27 @@ export default function ChatMessageScreen({ navigation, route }) {
   const handleDeleteMultiple = async () => {
     if (roomId) {
       for (const msgId of selectedMessages) {
+        const msg = messages.find(m => m.id === msgId);
+        if (msg) {
+          // Physical deletion for each
+          try {
+            const urisToDelete = [
+              msg.image,
+              msg.videoUri,
+              msg.fileUri,
+              msg.voiceUri,
+              msg.decryptedUri
+            ].filter(uri => uri && typeof uri === 'string' && (uri.startsWith('file://') || uri.startsWith('/')));
+
+            for (const uri of urisToDelete) {
+              const path = uri.startsWith('file://') ? uri : `file://${uri}`;
+              const info = await FileSystem.getInfoAsync(path);
+              if (info.exists) {
+                await FileSystem.deleteAsync(path, { idempotent: true });
+              }
+            }
+          } catch (e) { }
+        }
         await messageStorage.deleteMessage(roomId, msgId);
       }
     }
@@ -2063,8 +2384,12 @@ export default function ChatMessageScreen({ navigation, route }) {
         senderNickname: userNickname,
       }, vaultId);
 
+      setIsUploading(false);
+      setUploadProgress(0);
     } catch (err) {
       console.error('Failed to stop and send recording', err);
+      setIsUploading(false);
+      setUploadProgress(0);
     }
     setRecordingDuration(0);
   };
@@ -2081,13 +2406,19 @@ export default function ChatMessageScreen({ navigation, route }) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
-      <SafeAreaView style={styles.safe}>
+      <View style={[styles.safe, { backgroundColor: COLORS.white }]}>
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
         {/* ===== HEADER ===== */}
         {multiSelectMode ? (
           // Multi-select header
-          <View style={[styles.multiSelectHeader, { paddingHorizontal: headerPaddingHorizontal }]}>
+          <View style={[
+            styles.multiSelectHeader,
+            {
+              paddingHorizontal: headerPaddingHorizontal,
+              paddingTop: insets.top + SPACING.sm
+            }
+          ]}>
             <TouchableOpacity
               onPress={exitMultiSelectMode}
               activeOpacity={0.6}
@@ -2120,9 +2451,19 @@ export default function ChatMessageScreen({ navigation, route }) {
           </View>
         ) : (
           // Normal header
-          <View style={[styles.header, { paddingHorizontal: headerPaddingHorizontal }]}>
+          <View style={[
+            styles.header,
+            {
+              paddingHorizontal: headerPaddingHorizontal,
+              paddingTop: insets.top + SPACING.sm
+            }
+          ]}>
             <TouchableOpacity
-              onPress={() => navigation?.goBack?.()}
+              onPress={() => {
+                if (navigation.canGoBack()) {
+                  navigation.goBack();
+                }
+              }}
               activeOpacity={0.6}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
@@ -2140,7 +2481,7 @@ export default function ChatMessageScreen({ navigation, route }) {
                     overflow: 'hidden',
                   }
                 ]}>
-                  {contactAvatar && (contactAvatar.startsWith('http') || contactAvatar.startsWith('file') || contactAvatar.startsWith('content')) ? (
+                  {contactAvatar && typeof contactAvatar === 'string' && (contactAvatar.startsWith('http') || contactAvatar.startsWith('file') || contactAvatar.startsWith('data:') || contactAvatar.startsWith('content')) ? (
                     <Image
                       source={{ uri: contactAvatar }}
                       style={{ width: responsiveSize(40, screenWidth), height: responsiveSize(40, screenWidth) }}
@@ -2161,10 +2502,10 @@ export default function ChatMessageScreen({ navigation, route }) {
                 ]} />
               </View>
               <View style={styles.contactInfo}>
-                <Text style={[styles.contactName, { fontSize: contactNameFontSize }]}>
-                  {contactName}
+                <Text style={[styles.contactName, { fontSize: contactNameFontSize, fontWeight: '700' }]}>
+                  {contacts.find(c => c.cid === contactCID)?.nickname || contactName}
                 </Text>
-                <Text style={[styles.contactStatus, { fontSize: contactStatusFontSize }]}>
+                <Text style={[styles.contactStatus, { fontSize: contactStatusFontSize, color: contactStatus === 'Online' ? COLORS.success : COLORS.gray500 }]}>
                   ● {contactStatus}
                 </Text>
               </View>
@@ -2181,20 +2522,54 @@ export default function ChatMessageScreen({ navigation, route }) {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.headerIconBtn}
+                style={[styles.headerIconBtn, isCallInitiating && { opacity: 0.5 }]}
                 activeOpacity={0.6}
-                onPress={() => alert('Voice call initiated')}
+                disabled={isCallInitiating}
+                onPress={async () => {
+                  try {
+                    setIsCallInitiating(true);
+                    const callId = await signalingService.startCall(
+                      { id: contactCID, name: contactName, avatar: contactAvatar },
+                      { id: userCID, name: userNickname, avatar: userAvatarSafe },
+                      "voice"
+                    );
+                    if (callId) {
+                      navigation.navigate("VoiceCall");
+                    }
+                  } catch (err) {
+                    console.error("Voice call initiation failed:", err);
+                  } finally {
+                    setIsCallInitiating(false);
+                  }
+                }}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Text style={{ fontSize: headerIconFontSize }}>☎️</Text>
+                <Ionicons name="call" size={18} color={COLORS.primary} />
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.headerIconBtn}
+                style={[styles.headerIconBtn, isCallInitiating && { opacity: 0.5 }]}
                 activeOpacity={0.6}
-                onPress={() => alert('Video call initiated')}
+                disabled={isCallInitiating}
+                onPress={async () => {
+                  try {
+                    setIsCallInitiating(true);
+                    const callId = await signalingService.startCall(
+                      { id: contactCID, name: contactName, avatar: contactAvatar },
+                      { id: userCID, name: userNickname, avatar: userAvatarSafe },
+                      "video"
+                    );
+                    if (callId) {
+                      navigation.navigate("VideoCall");
+                    }
+                  } catch (err) {
+                    console.error("Video call initiation failed:", err);
+                  } finally {
+                    setIsCallInitiating(false);
+                  }
+                }}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Text style={{ fontSize: headerIconFontSize }}>📹</Text>
+                <Ionicons name="videocam" size={18} color={COLORS.primary} />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -2209,26 +2584,7 @@ export default function ChatMessageScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* ===== ENCRYPTION INFO BANNER ===== */}
-        <View style={[styles.encryptionBanner, { marginHorizontal: headerPaddingHorizontal }]}>
-          <Text style={{ fontSize: responsiveFontSize(16, screenWidth) }}>🔐</Text>
-          <Text style={[
-            styles.encryptionText,
-            { fontSize: responsiveFontSize(12, screenWidth) }
-          ]}>
-            AES-256 · E2E Encrypted · PFS
-          </Text>
-          <TouchableOpacity
-            style={styles.verifyBtn}
-            onPress={() => alert('Show encryption details')}
-            activeOpacity={0.6}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={[styles.verifyText, { fontSize: responsiveFontSize(12, screenWidth) }]}>
-              Verify
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Encryption banner removed as requested */}
 
         {/* ===== MESSAGES LIST ===== */}
         <FlatList
@@ -2239,7 +2595,8 @@ export default function ChatMessageScreen({ navigation, route }) {
             <MessageBubble
               msg={item}
               onLongPress={handleMessageLongPress}
-              onReplyPress={() => { }}
+              onReplyPress={() => setReplyTo(item)}
+              onResend={handleResendMessage}
               isSelected={multiSelectMode ? selectedMessages.includes(item.id) : undefined}
               onSelect={multiSelectMode ? handleSelectMessage : undefined}
               screenDimensions={screenDimensions}
@@ -2273,7 +2630,7 @@ export default function ChatMessageScreen({ navigation, route }) {
             styles.inputArea,
             {
               paddingHorizontal: responsiveSize(12, screenWidth),
-              paddingBottom: SPACING.md,
+              paddingBottom: (recording ? SPACING.md : (insets.bottom > 0 ? insets.bottom : SPACING.md)),
             }
           ]}>
             {isUploading && (
@@ -2282,6 +2639,23 @@ export default function ChatMessageScreen({ navigation, route }) {
                 <View style={styles.uploadProgressBar}>
                   <View style={[styles.uploadProgressFill, { width: `${uploadProgress}%` }]} />
                 </View>
+              </View>
+            )}
+
+            {replyTo && (
+              <View style={styles.replyPreviewBar}>
+                <View style={styles.replyLine} />
+                <View style={styles.replyPreviewContent}>
+                  <Text style={styles.replyPreviewSender} numberOfLines={1}>
+                    Reply to {replyTo.senderNickname || (replyTo.sender === 'sent' ? 'You' : contactName)}
+                  </Text>
+                  <Text style={styles.replyPreviewText} numberOfLines={1}>
+                    {replyTo.type === 'image' ? '📷 Photo' : (replyTo.type === 'video' ? '📹 Video' : (replyTo.type === 'voice' ? '🎤 Voice' : (replyTo.type === 'file' ? '📄 File' : replyTo.text)))}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setReplyTo(null)} style={styles.closeReplyBtn}>
+                  <Ionicons name="close-circle" size={20} color={COLORS.slate400} />
+                </TouchableOpacity>
               </View>
             )}
 
@@ -2319,25 +2693,7 @@ export default function ChatMessageScreen({ navigation, route }) {
                   <Text style={{ fontSize: responsiveFontSize(18, screenWidth) }}>📎</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[
-                    styles.viewOnceBtn,
-                    isViewOnceText && styles.viewOnceBtnActive,
-                    {
-                      width: responsiveSize(36, screenWidth),
-                      height: responsiveSize(36, screenWidth),
-                      borderRadius: responsiveSize(18, screenWidth),
-                      marginLeft: 4,
-                    }
-                  ]}
-                  activeOpacity={0.6}
-                  onPress={() => setIsViewOnceText(!isViewOnceText)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Text style={{ fontSize: responsiveFontSize(18, screenWidth) }}>
-                    {isViewOnceText ? '👁️‍🗨️' : '👁️'}
-                  </Text>
-                </TouchableOpacity>
+                {/* View Once button removed as requested */}
 
                 <TextInput
                   style={[
@@ -2491,7 +2847,7 @@ export default function ChatMessageScreen({ navigation, route }) {
                   <>
                     {(viewOncePreviewMsg?.originalType === 'image' || viewOncePreviewMsg?.originalType === 'photo' || viewOncePreviewMsg?.image) && (
                       <Image
-                        source={{ uri: viewOncePreviewMsg.image }}
+                        source={{ uri: ensureUri(viewOncePreviewMsg.image) }}
                         style={styles.fullImage}
                         resizeMode="contain"
                         onLoad={() => console.log('[ViewOnce] Image loaded successfully')}
@@ -2500,7 +2856,7 @@ export default function ChatMessageScreen({ navigation, route }) {
                     )}
                     {viewOncePreviewMsg?.originalType === 'video' && (
                       <Video
-                        source={{ uri: viewOncePreviewMsg.videoUri }}
+                        source={{ uri: ensureUri(viewOncePreviewMsg.videoUri) }}
                         style={styles.fullVideo}
                         useNativeControls
                         resizeMode="contain"
@@ -2564,7 +2920,7 @@ export default function ChatMessageScreen({ navigation, route }) {
           }}
           screenDimensions={screenDimensions}
         />
-      </SafeAreaView>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -2657,13 +3013,12 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
   },
   headerIconBtn: {
-    backgroundColor: COLORS.slate100,
+    backgroundColor: '#EFF6FF',
     alignItems: 'center',
     justifyContent: 'center',
-    aspectRatio: 1,
-    minWidth: 44,
-    minHeight: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
   },
   encryptionBanner: {
     flexDirection: 'row',
@@ -3588,5 +3943,65 @@ const styles = StyleSheet.create({
   viewOnceFileBtnText: {
     color: '#fff',
     fontWeight: '700',
+  },
+  // Reply & Quote Styles
+  quoteBox: {
+    padding: SPACING.sm,
+    borderRadius: RADIUS.md,
+    flexDirection: 'row',
+    marginBottom: SPACING.xs,
+    overflow: 'hidden',
+  },
+  quoteLine: {
+    width: 3,
+    backgroundColor: COLORS.primary,
+    borderRadius: 1.5,
+    marginRight: SPACING.sm,
+  },
+  quoteSender: {
+    fontWeight: '700',
+    marginBottom: 1,
+  },
+  quoteText: {
+    fontWeight: '400',
+  },
+  replyPreviewBar: {
+    position: 'absolute',
+    top: -60,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.white,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: COLORS.gray100,
+    gap: SPACING.md,
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    height: 60,
+  },
+  replyLine: {
+    width: 4,
+    height: '80%',
+    backgroundColor: COLORS.primary,
+    borderRadius: 2,
+  },
+  replyPreviewContent: {
+    flex: 1,
+  },
+  replyPreviewSender: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.primary,
+    marginBottom: 2,
+  },
+  replyPreviewText: {
+    fontSize: 13,
+    color: COLORS.slate500,
+  },
+  closeReplyBtn: {
+    padding: 4,
   },
 });

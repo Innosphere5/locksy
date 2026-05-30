@@ -80,7 +80,7 @@ export default function ShowCIDScreen({ navigation }) {
   };
 
   const handleContinue = () => {
-    navigation.navigate("SetupNickname");
+    navigation.replace("SetupNickname");
   };
 
   if (!userCID) {

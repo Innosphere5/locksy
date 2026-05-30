@@ -85,7 +85,7 @@ export default function CIDGenerationScreen({ navigation }) {
   }, [setUserCID]);
 
   const handleContinue = () => {
-    navigation.navigate("SetupMasterPassword");
+    navigation.replace("SetupMasterPassword");
   };
 
   return (

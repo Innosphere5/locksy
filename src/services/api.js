@@ -29,6 +29,8 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}:`, error.response?.data || error.message);
+    
     if (error.response && error.response.status === 401) {
       // Token invalid or session expired - nuke locally
       await SecureStore.deleteItemAsync('locksy_token');

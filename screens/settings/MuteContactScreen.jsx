@@ -8,9 +8,13 @@ import {
   SafeAreaView,
   ScrollView,
   Alert,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
+import messageStorage from '../../utils/messageStorage';
+import socketService from '../../utils/socketService';
 
 /**
  * MuteContactScreen - Screen 65
@@ -23,18 +27,72 @@ export default function MuteContactScreen({ navigation, route }) {
   };
 
   const [selectedDuration, setSelectedDuration] = useState('1h');
+  const [isMuting, setIsMuting] = useState(false);
 
   const muteDurations = [
+    { id: 'none', label: 'Unmute', value: 'none' },
     { id: '1h', label: 'For 1 hour', value: '1 hour' },
     { id: '8h', label: 'For 8 hours', value: '8 hours' },
     { id: '1w', label: 'For 1 week', value: '1 week' },
     { id: 'always', label: 'Always', value: 'forever', warning: true },
   ];
 
-  const handleMute = () => {
-    const duration = muteDurations.find(d => d.id === selectedDuration)?.value;
-    Alert.alert('Muted', `Notifications muted ${duration}`);
-    navigation.goBack();
+  const handleMute = async () => {
+    if (isMuting) return;
+    
+    if (!contact.roomId) {
+      Alert.alert('Error', 'Cannot mute this contact (missing room ID)');
+      return;
+    }
+
+    try {
+      setIsMuting(true);
+      const now = Date.now();
+      let until = null;
+
+      const DAY_MS = 24 * 60 * 60 * 1000;
+
+      switch (selectedDuration) {
+        case 'none': until = 0; break;
+        case '1h': until = now + 3600 * 1000; break;
+        case '8h': until = now + 8 * 3600 * 1000; break;
+        case '1w': until = now + 7 * DAY_MS; break;
+        case 'always': until = now + 100 * 365 * DAY_MS; break; // 100 years
+        default: until = null;
+      }
+
+      await messageStorage.saveMuteStatus(contact.roomId, until);
+      socketService.muteContact(contact.roomId, until);
+      
+      const contactName = contact.name || contact.nickname || 'User';
+      const durationLabel = muteDurations.find(d => d.id === selectedDuration)?.label;
+      
+      const successTitle = selectedDuration === 'none' ? 'Unmuted' : 'Muted';
+      const successMsg = selectedDuration === 'none' 
+        ? `Notifications for ${contactName} are now enabled.`
+        : `Notifications for ${contactName} are muted ${durationLabel}.`;
+
+      Alert.alert(
+        successTitle,
+        successMsg,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              }
+            }
+          }
+        ],
+        { cancelable: false }
+      );
+    } catch (error) {
+      console.error("[MuteContact] Failed to mute:", error);
+      Alert.alert("Error", "Failed to update mute status. Please try again.");
+    } finally {
+      setIsMuting(false);
+    }
   };
 
   return (
@@ -43,7 +101,14 @@ export default function MuteContactScreen({ navigation, route }) {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity 
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            }
+          }} 
+          style={styles.backBtn}
+        >
           <Ionicons name="arrow-back" size={20} color={COLORS.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Mute Contact</Text>
@@ -57,8 +122,12 @@ export default function MuteContactScreen({ navigation, route }) {
       >
         {/* Contact Info */}
         <View style={styles.contactCard}>
-          <View style={styles.contactAvatar}>
-            <Text style={styles.avatarText}>{contact.avatar}</Text>
+          <View style={[styles.contactAvatar, { overflow: 'hidden' }]}>
+            {contact.avatar && typeof contact.avatar === 'string' && (contact.avatar.startsWith('http') || contact.avatar.startsWith('file') || contact.avatar.startsWith('data:') || contact.avatar.startsWith('content')) ? (
+              <Image source={{ uri: contact.avatar }} style={{ width: '100%', height: '100%' }} />
+            ) : (
+              <Text style={styles.avatarText}>{contact.avatar || '👤'}</Text>
+            )}
           </View>
           <View style={styles.contactInfo}>
             <Text style={styles.contactName}>Mute {contact.name}</Text>
@@ -116,12 +185,21 @@ export default function MuteContactScreen({ navigation, route }) {
       {/* Action Button */}
       <View style={styles.footer}>
         <TouchableOpacity 
-          style={styles.muteButton}
+          style={[styles.muteButton, isMuting && styles.muteButtonDisabled]} 
           onPress={handleMute}
+          disabled={isMuting}
           activeOpacity={0.85}
         >
-          <MaterialCommunityIcons name="bell-off" size={20} color={COLORS.white} />
-          <Text style={styles.muteButtonText}>Mute for 1 hour</Text>
+          {isMuting ? (
+            <ActivityIndicator color={COLORS.white} />
+          ) : (
+            <>
+              <MaterialCommunityIcons name={selectedDuration === 'none' ? "bell-outline" : "bell-off"} size={20} color={COLORS.white} />
+              <Text style={styles.muteButtonText}>
+                {selectedDuration === 'none' ? 'Unmute Notifications' : `Mute ${muteDurations.find(d => d.id === selectedDuration)?.label}`}
+              </Text>
+            </>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -299,6 +377,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: SPACING.sm,
+  },
+  muteButtonDisabled: {
+    opacity: 0.6,
   },
   muteButtonText: {
     ...TYPOGRAPHY.body1,

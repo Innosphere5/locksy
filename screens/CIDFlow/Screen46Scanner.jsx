@@ -17,6 +17,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import jsQR from 'jsqr';
 import { decode as decodeJpeg } from 'jpeg-js';
 import { Buffer } from 'buffer';
+import { useIsFocused } from '@react-navigation/native';
 
 import { COLORS } from '../../theme/colors';
 import { NavBar, PrimaryButton } from '../../component/CIDFlowShared';
@@ -31,6 +32,7 @@ import { useCIDContext } from '../../context/CIDContext';
 const Screen46Scanner = ({ onNext, onBack, route }) => {
   const { setCurrentContact, userCID } = useCIDContext();
   const [permission, requestPermission] = useCameraPermissions();
+  const isFocused = useIsFocused();
   const [scanned, setScanned] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   
@@ -106,10 +108,14 @@ const Screen46Scanner = ({ onNext, onBack, route }) => {
     // Diagnostic signal: prove the camera sees a QR
     console.log('[Scanner] Raw signal detected:', data);
     
-    if (data && data.length >= 6) {
+    const cleanData = data ? data.trim().toUpperCase() : '';
+    // Regex matches EXACTLY 6 alphanumeric characters
+    if (/^[A-Z0-9]{6}$/.test(cleanData)) {
       setScanned(true);
       console.log('[Scanner] Valid signal captured, starting search...');
-      handleDecodedCID(data);
+      handleDecodedCID(cleanData);
+    } else {
+      console.log('[Scanner] Ignored invalid QR code:', data);
     }
   };
 
@@ -220,13 +226,16 @@ const Screen46Scanner = ({ onNext, onBack, route }) => {
 
       {/* Camera Viewport */}
       <View style={CIDFlowStyles.scannerViewport}>
-        <CameraView
-          style={StyleSheet.absoluteFill}
-          onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-          barcodeSettings={{
-            barcodeTypes: ["qr"],
-          }}
-        />
+        {isFocused && (
+          <CameraView
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', zIndex: 0 }}
+            facing="back"
+            onBarcodeScanned={handleBarCodeScanned}
+            barcodeScannerSettings={{
+              barcodeTypes: ["qr"],
+            }}
+          />
+        )}
         
         {/* Pulsing UI Overlay */}
         <Animated.View

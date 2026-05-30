@@ -2,53 +2,28 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
-  FlatList,
-  TextInput,
-  SafeAreaView,
+  StyleSheet,
   StatusBar,
+  TextInput,
+  FlatList,
   Platform,
+  Image,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CIDContext } from '../../context/CIDContext';
+import { COLORS } from '../../theme';
 
-const CONTACTS = [
-  {
-    id: '1',
-    name: 'Ghost_Fox',
-    status: 'Online now',
-    online: true,
-    avatar: '🦊',
-    avatarBg: '#EEF2FF',
-    verified: true,
-    e2ee: false,
-  },
-  {
-    id: '2',
-    name: 'Shadow_Wolf',
-    status: 'Last seen 2h ago',
-    online: false,
-    avatar: '🐺',
-    avatarBg: '#EDE9FE',
-    verified: false,
-    e2ee: true,
-  },
-  {
-    id: '3',
-    name: 'Cipher_Eagle',
-    status: 'Last seen 5h ago',
-    online: false,
-    avatar: '🦅',
-    avatarBg: '#D1FAE5',
-    verified: false,
-    e2ee: true,
-  },
-];
 
 function ContactRow({ item, onPress }) {
   return (
     <TouchableOpacity style={styles.contactRow} onPress={onPress} activeOpacity={0.7}>
-      <View style={[styles.avatar, { backgroundColor: item.avatarBg }]}>
-        <Text style={styles.avatarEmoji}>{item.avatar}</Text>
+      <View style={[styles.avatar, { backgroundColor: item.avatarBg || '#F1F5F9', overflow: 'hidden' }]}>
+        {item.avatar && typeof item.avatar === 'string' && (item.avatar.startsWith('http') || item.avatar.startsWith('file') || item.avatar.startsWith('data:') || item.avatar.startsWith('content')) ? (
+          <Image source={{ uri: item.avatar }} style={{ width: '100%', height: '100%' }} />
+        ) : (
+          <Text style={styles.avatarEmoji}>{item.avatar || '👤'}</Text>
+        )}
         {item.online && <View style={styles.onlineDot} />}
       </View>
       <View style={styles.contactInfo}>
@@ -72,14 +47,17 @@ function ContactRow({ item, onPress }) {
 }
 
 export default function NewMessageScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
+  const { contacts } = React.useContext(CIDContext);
   const [search, setSearch] = useState('');
 
-  const filtered = CONTACTS.filter((c) =>
-    c.name.toLowerCase().includes(search.toLowerCase())
+  const filtered = contacts.filter((c) =>
+    (c.nickname || c.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (c.cid || '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <View style={[styles.safe, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
 
       {/* Header */}
@@ -115,8 +93,18 @@ export default function NewMessageScreen({ navigation }) {
         keyExtractor={(i) => i.id}
         renderItem={({ item }) => (
           <ContactRow
-            item={item}
-            onPress={() => navigation.navigate('ChatMessage', { name: item.name, avatar: item.avatar })}
+            item={{
+              ...item,
+              name: item.nickname || item.name || 'User',
+              online: item.status === 'online',
+              status: item.status === 'online' ? 'Online' : 'Offline',
+            }}
+            onPress={() => navigation.navigate('ChatMessage', {
+              chatId: item.roomId,
+              contactName: item.nickname || item.name || 'User',
+              contactCID: item.cid,
+              contactAvatar: item.avatar || '👤',
+            })}
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -124,13 +112,17 @@ export default function NewMessageScreen({ navigation }) {
       />
 
       {/* Add by CID */}
-      <TouchableOpacity style={styles.addCIDBtn} activeOpacity={0.8}>
+      <TouchableOpacity 
+        style={[styles.addCIDBtn, { marginBottom: Math.max(insets.bottom, 16) }]} 
+        activeOpacity={0.8}
+        onPress={() => navigation.navigate("AddContactByCID")}
+      >
         <View style={styles.cidIcon}>
-          <Text style={{ fontSize: 16, color: '#6366F1' }}>🪪</Text>
+          <Text style={{ fontSize: 16, color: COLORS.primary }}>🪪</Text>
         </View>
         <Text style={styles.addCIDText}>Add contact by CID...</Text>
       </TouchableOpacity>
-    </SafeAreaView>
+    </View>
   );
 }
 

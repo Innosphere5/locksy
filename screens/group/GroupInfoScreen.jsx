@@ -152,11 +152,32 @@ export default function GroupInfoScreen({ navigation, route }) {
           </>
         )}
 
+        <Text style={styles.sectionLabel}>OPTIONS</Text>
+        <View style={styles.card}>
+          <TouchableOpacity 
+            style={styles.adminAction} 
+            onPress={() => navigation.navigate('MuteContact', { 
+              contact: {
+                name: group?.name,
+                roomId: groupId,
+                avatar: '👥',
+                isGroup: true
+              }
+            })}
+          >
+            <View style={[styles.adminActionIcon, { backgroundColor: COLORS.warning + '18' }]}>
+              <MaterialCommunityIcons name="bell-off" size={20} color={COLORS.warning} />
+            </View>
+            <Text style={styles.adminActionLabel}>Mute Notifications</Text>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} style={{ marginLeft: 'auto' }} />
+          </TouchableOpacity>
+        </View>
+
         {/* Members */}
         <Text style={styles.sectionLabel}>MEMBERS ({group?.members?.length || 0})</Text>
         <View style={styles.card}>
           {group?.members?.map((m, i) => (
-            <View key={m.cid || `member-${i}`}>
+            <View key={m.cid ? `member-${m.cid}-${i}` : `member-idx-${i}`}>
               <MemberRow 
                 item={m} 
                 isAdmin={isAdmin} 

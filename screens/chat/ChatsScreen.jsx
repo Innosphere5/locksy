@@ -10,7 +10,11 @@ import {
   SafeAreaView,
   StatusBar,
   Platform,
+  Modal,
+  Alert,
+  Image,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "../../theme";
 import { useCalls } from "../../context/CallsContext";
@@ -18,6 +22,8 @@ import { useGroups } from "../../context/GroupsContext";
 import { CIDContext } from "../../context/CIDContext";
 import useSocketNavigation from "../../hooks/useSocketNavigation";
 import messageStorage from "../../utils/messageStorage";
+import signalingService from "../../src/services/signalingService";
+import socketService from "../../utils/socketService";
 
 function Avatar({ item }) {
   if (item.locked) {
@@ -28,50 +34,27 @@ function Avatar({ item }) {
     );
   }
   return (
-    <View style={[styles.avatar, { backgroundColor: item.avatarBg }]}>
-      <Text style={styles.avatarEmoji}>{item.avatar}</Text>
+    <View style={[styles.avatar, { backgroundColor: item.avatarBg, overflow: 'hidden' }]}>
+      {item.avatar && typeof item.avatar === 'string' && (item.avatar.startsWith('http') || item.avatar.startsWith('file') || item.avatar.startsWith('data:') || item.avatar.startsWith('content')) ? (
+        <Image source={{ uri: item.avatar }} style={{ width: '100%', height: '100%' }} />
+      ) : (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={styles.avatarEmoji}>👤</Text>
+        </View>
+      )}
       {item.online && <View style={styles.onlineDot} />}
     </View>
   );
 }
 
-function ChatRow({ item, onPress, navigation }) {
-  const { initiateCall } = useCalls();
-
-  const handleVoiceCall = (e) => {
-    e.stopPropagation();
-    initiateCall(item.id, item.name, item.avatar, "voice");
-    navigation.navigate("VoiceCall", {
-      callInfo: {
-        id: item.id,
-        name: item.name,
-        avatar: item.avatar,
-        type: "voice",
-        encrypted: true,
-        direction: "outgoing",
-      },
-    });
-  };
-
-  const handleVideoCall = (e) => {
-    e.stopPropagation();
-    initiateCall(item.id, item.name, item.avatar, "video");
-    navigation.navigate("VideoCall", {
-      callInfo: {
-        id: item.id,
-        name: item.name,
-        avatar: item.avatar,
-        type: "video",
-        encrypted: true,
-        direction: "outgoing",
-      },
-    });
-  };
+function ChatRow({ item, onPress, onLongPress, navigation, handleVoiceCall, handleVideoCall, isCallInitiating }) {
+  const { userCID, userNickname, userAvatar } = React.useContext(CIDContext);
 
   return (
     <TouchableOpacity
       style={styles.chatRow}
       onPress={() => onPress(item)}
+      onLongPress={() => onLongPress(item)}
       activeOpacity={0.7}
     >
       <Avatar item={item} />
@@ -79,7 +62,7 @@ function ChatRow({ item, onPress, navigation }) {
         <View style={styles.chatHeader}>
           <View style={styles.nameRow}>
             <Text style={[styles.chatName, item.locked && styles.lockedName]}>
-              {item.name}
+              {item.name || 'User'}
             </Text>
             {item.badge && (
               <View style={[styles.badge, { borderColor: item.badgeColor }]}>
@@ -93,16 +76,24 @@ function ChatRow({ item, onPress, navigation }) {
             {!item.locked && (
               <>
                 <TouchableOpacity
-                  style={styles.callBtn}
-                  onPress={handleVoiceCall}
+                  style={[styles.callBtn, isCallInitiating && { opacity: 0.5 }]}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleVoiceCall(item);
+                  }}
                   activeOpacity={0.7}
+                  disabled={isCallInitiating}
                 >
                   <Ionicons name="call" size={16} color={COLORS.primary} />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.callBtn}
-                  onPress={handleVideoCall}
+                  style={[styles.callBtn, isCallInitiating && { opacity: 0.5 }]}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleVideoCall(item);
+                  }}
                   activeOpacity={0.7}
+                  disabled={isCallInitiating}
                 >
                   <Ionicons name="videocam" size={16} color={COLORS.primary} />
                 </TouchableOpacity>
@@ -139,10 +130,105 @@ export default function ChatsScreen({ navigation }) {
   useSocketNavigation();
 
   // Get saved contacts from context
-  const { contacts, pendingRequests, acceptRequest } = React.useContext(CIDContext);
+  const { contacts, pendingRequests, acceptRequest, removeContact } = React.useContext(CIDContext);
   const { groupInvites, acceptGroupInvite, rejectGroupInvite } = useGroups();
 
   const [stealthMode, setStealthMode] = useState(true);
+  const [isCallInitiating, setIsCallInitiating] = useState(false);
+  const { userCID, userNickname, userAvatar } = React.useContext(CIDContext);
+  const insets = useSafeAreaInsets();
+
+  const [selectedChat, setSelectedChat] = useState(null);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState(null);
+
+  // Handle navigation after modal is closed to prevent "stuck" UI
+  useEffect(() => {
+    if (!menuVisible && pendingNavigation) {
+      const { route, params } = pendingNavigation;
+      navigation.navigate(route, params);
+      setPendingNavigation(null);
+      setSelectedChat(null);
+    }
+  }, [menuVisible, pendingNavigation]);
+
+  const handleLongPress = (item) => {
+    setSelectedChat(item);
+    setMenuVisible(true);
+  };
+
+  const handleDeleteChat = () => {
+    if (!selectedChat) return;
+    Alert.alert(
+      "Clear Chat History",
+      `Are you sure you want to clear all message history with ${selectedChat.name}? The contact will remain in your list.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete & Remove", 
+          style: "destructive", 
+          onPress: async () => {
+            // 1. Clear local messages
+            await messageStorage.clearRoomMessages(selectedChat.roomId);
+            
+            // 2. Clear server-side history
+            socketService.clearChatHistory(selectedChat.roomId);
+
+            // 3. DO NOT REMOVE CONTACT
+            // The contact stays in the contacts list, but since there's no history,
+            // it will be hidden from this "Chats" screen main list.
+
+            setMenuVisible(false);
+            setSelectedChat(null);
+            
+            // 4. Force immediate UI refresh
+            const summaries = await messageStorage.getChatListSub();
+            const msgMap = {};
+            summaries.forEach(s => {
+              msgMap[s.groupId || s.roomId] = s;
+            });
+            setLastMessages(msgMap);
+          }
+        }
+      ]
+    );
+  };
+
+  const handleMuteChat = () => {
+    if (!selectedChat) return;
+    const fullContact = contacts.find(c => c.cid === selectedChat.cid);
+    
+    setPendingNavigation({
+      route: "MuteContact",
+      params: { 
+        contact: fullContact || {
+          name: selectedChat.name,
+          cid: selectedChat.cid,
+          avatar: selectedChat.avatar,
+          roomId: selectedChat.roomId
+        }
+      }
+    });
+    setMenuVisible(false);
+  };
+
+  const handleViewProfile = () => {
+    if (!selectedChat) return;
+    const fullContact = contacts.find(c => c.cid === selectedChat.cid);
+    
+    setPendingNavigation({
+      route: "ContactInfo",
+      params: { 
+        contact: fullContact || {
+          name: selectedChat.name,
+          cid: selectedChat.cid,
+          avatar: selectedChat.avatar,
+          roomId: selectedChat.roomId
+        }
+      }
+    });
+    setMenuVisible(false);
+  };
 
   const [search, setSearch] = useState("");
   const [lastMessages, setLastMessages] = useState({});
@@ -160,9 +246,14 @@ export default function ChatsScreen({ navigation }) {
 
     loadLastMsgs();
 
-    // Subscribe to updates (simple poll for now, or use socket/context triggers)
-    const interval = setInterval(loadLastMsgs, 3000);
-    return () => clearInterval(interval);
+    // Subscribe to socket events for real-time updates (instead of just 3s poll)
+    const unsubscribe = socketService.onMessageReceived(loadLastMsgs);
+    
+    const interval = setInterval(loadLastMsgs, 5000); // Keep as fallback but slower
+    return () => {
+      clearInterval(interval);
+      if (unsubscribe && typeof unsubscribe === 'function') unsubscribe();
+    };
   }, []);
 
   // Transform contacts into display format (Strictly 1-to-1)
@@ -170,12 +261,12 @@ export default function ChatsScreen({ navigation }) {
     const lastMsgData = lastMessages[contact.roomId];
     return {
       id: contact.cid,
-      name: contact.nickname,
+      name: contact.nickname || contact.name || 'User',
       badge: "E2EE",
       badgeColor: "#4B7BF5",
       lastMessage: lastMsgData ? lastMsgData.lastMessage : "Start chatting...",
       time: lastMsgData ? new Date(lastMsgData.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
-      unread: 0,
+      unread: lastMsgData ? lastMsgData.unread : 0,
       online: contact.status === "online",
       avatar: contact.avatar || "👤",
       avatarBg: "#EEF2FF",
@@ -183,13 +274,13 @@ export default function ChatsScreen({ navigation }) {
       isGroup: false, // Ensure this is false
       cid: contact.cid,
       roomId: contact.roomId,
+      timestamp: lastMsgData ? new Date(lastMsgData.timestamp).getTime() : 0,
     };
   });
 
-  const allChats = formattedChats.sort((a, b) => {
-    if (a.time && b.time) return b.time.localeCompare(a.time);
-    return 0;
-  });
+  const allChats = formattedChats
+    .filter(chat => lastMessages[chat.roomId]) // Only show chats that have a history summary
+    .sort((a, b) => b.timestamp - a.timestamp);
 
   const filtered = allChats.filter(
     (c) =>
@@ -206,11 +297,49 @@ export default function ChatsScreen({ navigation }) {
     });
   };
 
+  const userAvatarSafe = userAvatar || '👤';
+
+  const handleVoiceCall = async (item) => {
+    try {
+      setIsCallInitiating(true);
+      const callId = await signalingService.startCall(
+        { id: item.cid, name: item.name, avatar: item.avatar },
+        { id: userCID, name: userNickname, avatar: userAvatarSafe },
+        "voice"
+      );
+      if (callId) {
+        navigation.navigate("VoiceCall");
+      }
+    } catch (err) {
+      console.error("Voice call initiation failed:", err);
+    } finally {
+      setIsCallInitiating(false);
+    }
+  };
+
+  const handleVideoCall = async (item) => {
+    try {
+      setIsCallInitiating(true);
+      const callId = await signalingService.startCall(
+        { id: item.cid, name: item.name, avatar: item.avatar },
+        { id: userCID, name: userNickname, avatar: userAvatarSafe },
+        "video"
+      );
+      if (callId) {
+        navigation.navigate("VideoCall");
+      }
+    } catch (err) {
+      console.error("Video call initiation failed:", err);
+    } finally {
+      setIsCallInitiating(false);
+    }
+  };
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <View style={[styles.safe, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: 0 }]}>
         <View style={styles.headerLeft}>
           <View style={styles.appIcon}>
             <Text style={{ fontSize: 20 }}>🔒</Text>
@@ -218,19 +347,29 @@ export default function ChatsScreen({ navigation }) {
           <Text style={styles.appName}>Locksy</Text>
         </View>
         <View style={styles.headerRight}>
+          {/* Settings icon */}
           <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => navigation.navigate("Settings")}
+            style={[styles.iconBtn, { overflow: 'hidden' }]}
+            onPress={() => navigation.navigate('Settings')}
             activeOpacity={0.7}
           >
-            <Text style={{ fontSize: 20 }}>👤</Text>
+            <Ionicons name="settings-outline" size={24} color={COLORS.primary} />
           </TouchableOpacity>
+
+          {/* Avatar / profile */}
           <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => navigation.navigate("Settings")}
+            style={[styles.iconBtn, { overflow: 'hidden' }]}
+            onPress={() => navigation.navigate('EditNickname')}
             activeOpacity={0.7}
           >
-            <Text style={{ fontSize: 20 }}>⚙️</Text>
+            {userAvatar ? (
+              <Image
+                source={{ uri: userAvatar }}
+                style={{ width: '100%', height: '100%' }}
+              />
+            ) : (
+              <Text style={{ fontSize: 20 }}>👤</Text>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -333,7 +472,11 @@ export default function ChatsScreen({ navigation }) {
           <ChatRow
             item={item}
             onPress={() => handleChatPress(item)}
+            onLongPress={handleLongPress}
             navigation={navigation}
+            handleVoiceCall={handleVoiceCall}
+            handleVideoCall={handleVideoCall}
+            isCallInitiating={isCallInitiating}
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -341,7 +484,7 @@ export default function ChatsScreen({ navigation }) {
       />
 
       {/* Bottom Nav */}
-      <View style={styles.bottomNav}>
+      <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TouchableOpacity style={styles.navItem}>
           <View style={styles.navIconWrap}>
             <Text style={styles.navEmoji}>💬</Text>
@@ -370,7 +513,45 @@ export default function ChatsScreen({ navigation }) {
           <Text style={styles.navLabel}>Vault</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+
+      {/* Management Menu Modal */}
+      <Modal
+        visible={menuVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setMenuVisible(false)}
+        >
+          <View style={styles.menuContainer}>
+            <Text style={styles.menuTitle}>{selectedChat?.name}</Text>
+            
+            <TouchableOpacity style={styles.menuItem} onPress={handleViewProfile}>
+              <Ionicons name="person-outline" size={20} color="#475569" />
+              <Text style={styles.menuText}>View Profile</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.menuItem} onPress={handleMuteChat}>
+              <Ionicons name="notifications-off-outline" size={20} color="#475569" />
+              <Text style={styles.menuText}>Mute Notifications</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => setMenuVisible(false)}>
+              <Ionicons name="archive-outline" size={20} color="#475569" />
+              <Text style={styles.menuText}>Archive Chat</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.menuItem, styles.deleteItem]} onPress={handleDeleteChat}>
+              <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              <Text style={[styles.menuText, { color: '#EF4444' }]}>Clear History</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
   );
 }
 
@@ -387,7 +568,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 8,
     backgroundColor: "#FFFFFF",
-    marginTop: 25,
   },
   headerLeft: {
     flexDirection: "row",
@@ -603,6 +783,54 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   navActive: { color: "#3B82F6", fontWeight: "600" },
+
+  // Management Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  menuContainer: {
+    width: '100%',
+    maxWidth: 300,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingVertical: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  menuTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    textAlign: 'center',
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    gap: 12,
+  },
+  menuText: {
+    fontSize: 15,
+    color: '#334155',
+    fontWeight: '500',
+  },
+  deleteItem: {
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    marginTop: 4,
+  },
 
   // Requests
   requestsContainer: {

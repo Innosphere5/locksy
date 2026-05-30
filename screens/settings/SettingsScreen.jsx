@@ -26,7 +26,7 @@ export default function SettingsScreen({ navigation }) {
   const [stealthMode, setStealthMode] = useState(true);
   const [defaultTimer, setDefaultTimer] = useState('1h');
 
-  const { userNickname, userAvatar, userCID } = useCIDContext();
+  const { userNickname, userAvatar, userCID, lock } = useCIDContext();
 
   const user = {
     nickname: userNickname || 'Locksy_User',
@@ -229,7 +229,23 @@ export default function SettingsScreen({ navigation }) {
         {/* Logout Button */}
         <TouchableOpacity 
           style={styles.logoutButton}
-          onPress={() => Alert.alert('Logout', 'Are you sure?')}
+          onPress={() => {
+            Alert.alert(
+              'Logout',
+              'Are you sure you want to logout? You will need your master password to enter again.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { 
+                  text: 'Logout', 
+                  style: 'destructive', 
+                  onPress: () => {
+                    lock();
+                    // Navigation will be handled by the App's conditional rendering based on isUnlocked
+                  } 
+                }
+              ]
+            );
+          }}
           activeOpacity={0.85}
         >
           <Text style={styles.logoutButtonText}>Logout</Text>

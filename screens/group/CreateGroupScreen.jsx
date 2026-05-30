@@ -12,8 +12,10 @@ import {
   Platform,
   Alert,
   FlatList,
+  Image,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { COLORS, FONTS, SIZES, SHADOWS } from '../../theme';
 import { useGroups } from '../../context/GroupsContext';
 import { useCIDContext } from '../../context/CIDContext';
@@ -28,6 +30,7 @@ export default function CreateGroupScreen({ navigation }) {
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [usernameToAdd, setUsernameToAdd] = useState('');
+  const [groupLogo, setGroupLogo] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
 
   const handleAddByUsername = async () => {
@@ -53,8 +56,15 @@ export default function CreateGroupScreen({ navigation }) {
   };
 
   const filteredContacts = useMemo(() => {
-    if (!searchQuery.trim()) return contacts;
-    return contacts.filter(c => 
+    // Ensure unique contacts by CID
+    const uniqueMap = new Map();
+    contacts.forEach(c => {
+      if (!uniqueMap.has(c.cid)) uniqueMap.set(c.cid, c);
+    });
+    const uniqueContacts = Array.from(uniqueMap.values());
+
+    if (!searchQuery.trim()) return uniqueContacts;
+    return uniqueContacts.filter(c => 
       c.nickname?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.cid?.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -92,6 +102,7 @@ export default function CreateGroupScreen({ navigation }) {
         description: description.trim(),
         mode,
         members: selectedMembers,
+        groupLogo: groupLogo, // Pass logo
       });
 
       // Navigate to group chat
@@ -104,6 +115,20 @@ export default function CreateGroupScreen({ navigation }) {
       Alert.alert('Error', error?.message || 'Failed to create group');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.5,
+      base64: true,
+    });
+
+    if (!result.canceled) {
+      setGroupLogo(`data:image/jpeg;base64,${result.assets[0].base64}`);
     }
   };
 
@@ -126,11 +151,17 @@ export default function CreateGroupScreen({ navigation }) {
           <Text style={styles.title}>Create Secure Group</Text>
 
           {/* Avatar Picker */}
-          <TouchableOpacity style={styles.avatarPicker} activeOpacity={0.7}>
-            <MaterialCommunityIcons name="account-group" size={36} color={COLORS.primary} />
-            <View style={styles.avatarAddIcon}>
-              <Ionicons name="add" size={14} color={COLORS.white} />
-            </View>
+          <TouchableOpacity style={styles.avatarPicker} activeOpacity={0.7} onPress={pickImage}>
+            {groupLogo ? (
+              <Image source={{ uri: groupLogo }} style={styles.logoImage} />
+            ) : (
+              <>
+                <MaterialCommunityIcons name="account-group" size={36} color={COLORS.primary} />
+                <View style={styles.avatarAddIcon}>
+                  <Ionicons name="add" size={14} color={COLORS.white} />
+                </View>
+              </>
+            )}
           </TouchableOpacity>
 
           {/* Group Name */}
@@ -339,8 +370,12 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 28,
     borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: COLORS.border,
+    borderColor: COLORS.primary,
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: '100%',
+    height: '100%',
   },
   avatarAddIcon: {
     position: 'absolute',

@@ -4,6 +4,7 @@
     "slug": "locksy",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": "locksy",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
@@ -12,15 +13,38 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.locksy.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Locksy to access your camera for QR scanning and video calls.",
+        "NSMicrophoneUsageDescription": "Allow Locksy to access your microphone for audio and video calls.",
+        "NSPhotoLibraryUsageDescription": "Allow Locksy to access your photos.",
+        "NSUserTrackingUsageDescription": "This app uses notifications and connectivity features."
+      }
     },
     "android": {
+      "package": "com.innosphere.locksy",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "POST_NOTIFICATIONS",
+        "INTERNET",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -28,18 +52,45 @@
     "plugins": [
       "expo-secure-store",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/logo.png",
+          "color": "#ffffff",
+          "defaultChannel": "default"
+        }
+      ],
+      [
         "expo-camera",
         {
-          "cameraPermission": "Allow Locksy to access your camera to scan QR codes."
+          "cameraPermission": "Allow Locksy to access your camera to scan QR codes and make video calls."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Locksy to access your photos to scan QR codes from the gallery."
+          "photosPermission": "Allow Locksy to access your photos and media."
         }
       ],
-      "expo-audio"
-    ]
+      "expo-av",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Allow Locksy to access your camera for video calls.",
+          "microphonePermission": "Allow Locksy to access your microphone for audio calls."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "282914b8-abf8-44a2-aeba-a20b7dde36a7"
+      },
+      "apiUrl": "https://locksy-server.onrender.com"
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    }
   }
 }

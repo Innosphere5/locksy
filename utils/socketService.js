@@ -103,9 +103,20 @@ class SocketService {
     this.socket.removeAllListeners("contact:request");
     this.socket.removeAllListeners("contact:accepted");
     this.socket.removeAllListeners("user:status");
-    this.socket.removeAllListeners("group:invite");
+    this.socket.removeAllListeners("groep:invite");
+    this.socket.removeAllListeners("groep:removed");
+    this.socket.removeAllListeners("groep:created");
+    this.socket.removeAllListeners("groep:deleted");
     this.socket.removeAllListeners("group:update");
     this.socket.removeAllListeners("room:joined");
+    this.socket.removeAllListeners("call:offer");
+    this.socket.removeAllListeners("call:answer");
+    this.socket.removeAllListeners("call:ice-candidate");
+    this.socket.removeAllListeners("call:rejected");
+    this.socket.removeAllListeners("call:ended");
+    this.socket.removeAllListeners("call:busy");
+    this.socket.removeAllListeners("message:status:update");
+    this.socket.removeAllListeners("message:sent");
 
     // Standard Message Listener
     this.socket.on("message:received", async (message) => {
@@ -127,6 +138,17 @@ class SocketService {
       
       // Dispatch to UI listeners
       this._dispatch("message:deleted", data);
+    });
+
+    // Message Bulk Deleted Listener
+    this.socket.on("message:deleted_bulk", async (data) => {
+      console.log(`[SocketService] Global message:deleted_bulk triggered for ${data.messageIds.length} msgs`);
+      
+      // REMOVE FROM LOCAL STORAGE IMMEDIATELY
+      await messageStorage.deleteMessagesBulk(data.roomId, data.messageIds);
+      
+      // Dispatch to UI listeners
+      this._dispatch("message:deleted_bulk", data);
     });
 
     // Message Reaction Listener
@@ -168,10 +190,10 @@ class SocketService {
       this._dispatch("user:status", data);
     });
 
-    // Group Invitation Listener
-    this.socket.on("group:invite", (data) => {
-      console.log("[SocketService] Received group:invite", data.groupName);
-      this._dispatch("group:invite", data);
+    // Group Invitation Listener (REFINED)
+    this.socket.on("groep:invite", (data) => {
+      console.log("[SocketService] Received groep:invite", data.groupName);
+      this._dispatch("groep:invite", data);
     });
 
     // Group Update Listener
@@ -180,9 +202,73 @@ class SocketService {
       this._dispatch("group:update", data);
     });
 
+    // Group removed status
+    this.socket.on("groep:removed", (data) => {
+       console.log("[SocketService] Received groep:removed", data.groupId);
+       this._dispatch("groep:removed", data);
+    });
+
+    // Group created status (for admin)
+    this.socket.on("groep:created", (data) => {
+       console.log("[SocketService] Received groep:created", data.groupId);
+       this._dispatch("groep:created", data);
+    });
+
+    // Group deleted status (Admin left)
+    this.socket.on("groep:deleted", (data) => {
+       console.log("[SocketService] Received groep:deleted", data.groupId);
+       this._dispatch("groep:deleted", data);
+    });
+
     // Join room status
     this.socket.on("room:joined", (data) => {
        this._dispatch("room:joined", data);
+    });
+
+    // Call Signaling Listeners
+    this.socket.on("call:offer", (data) => {
+      console.log("[SocketService] Received call:offer", data.callId);
+      this._dispatch("call:offer", data);
+    });
+
+    this.socket.on("call:answer", (data) => {
+      console.log("[SocketService] Received call:answer", data.callId);
+      this._dispatch("call:answer", data);
+    });
+
+    this.socket.on("call:ice-candidate", (data) => {
+      this._dispatch("call:ice-candidate", data);
+    });
+
+    this.socket.on("call:rejected", (data) => {
+      console.log("[SocketService] Received call:rejected", data.callId);
+      this._dispatch("call:rejected", data);
+    });
+
+    this.socket.on("call:ended", (data) => {
+      console.log("[SocketService] Received call:ended", data.callId);
+      this._dispatch("call:ended", data);
+    });
+
+    this.socket.on("call:busy", (data) => {
+      console.log("[SocketService] Received call:busy", data.callId);
+      this._dispatch("call:busy", data);
+    });
+
+    // Message Status Update Listener
+    this.socket.on("message:status:update", async (data) => {
+      console.log("[SocketService] Global message:status:update triggered", data.messageId, data.status);
+      
+      // PERSIST STATUS LOCALLY
+      await messageStorage.updateMessageStatus(data.roomId || data.groupId, data.messageId, data.status);
+      
+      this._dispatch("message:status:update", data);
+    });
+
+    // Message Sent (Ack) Listener
+    this.socket.on("message:sent", (data) => {
+      console.log("[SocketService] Message sent (ack) received", data.id);
+      this._dispatch("message:sent", data);
     });
   }
 
@@ -255,6 +341,20 @@ class SocketService {
   }
 
   /**
+   * Convenience: Register listener for message status updates (Delivered/Read)
+   */
+  onMessageStatusUpdate(callback) {
+    return this.on("message:status:update", callback);
+  }
+
+  /**
+   * Convenience: Register listener for message sent acknowledgment
+   */
+  onMessageSent(callback) {
+    return this.on("message:sent", callback);
+  }
+
+  /**
    * Convenience: Register listener for when a contact connection is established
    */
   onContactAdded(callback) {
@@ -264,127 +364,178 @@ class SocketService {
   /**
    * Register user with CID and Public Key
    */
-  registerUser(cid, nickname, avatar = null, publicKey = null) {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) return reject(new Error("Socket not connected"));
-      this.userCid = cid;
+  async registerUser(cid, nickname, avatar = null, publicKey = null, pushToken = null) {
+    try {
+      if (!this.socket) {
+        await this.connect(AppConfig.SOCKET.URL);
+      }
+      if (!this.isConnected) {
+        await this.waitForConnection();
+      }
 
-      console.log(`[SocketService] Registering user: ${cid}`);
-      const regData = { cid, nickname, avatar, publicKey };
-      this.socket.emit("register", regData);
+      return new Promise((resolve, reject) => {
+        this.userCid = cid;
 
-      const onRegisterSuccess = (data) => {
-        this.userData = regData; // Save for automatic re-registration
-        this.socket.off("register:success", onRegisterSuccess);
-        this.socket.off("register:error", onRegisterError);
-        resolve(data);
-      };
+        console.log(`[SocketService] Registering user: ${cid}`);
+        const regData = { cid, nickname, avatar, publicKey, pushToken };
+        this.socket.emit("register", regData);
 
-      const onRegisterError = (err) => {
-        this.socket.off("register:success", onRegisterSuccess);
-        this.socket.off("register:error", onRegisterError);
-        reject(new Error(err.message || "Registration failed"));
-      };
+        const onRegisterSuccess = (data) => {
+          this.userData = regData; // Save for automatic re-registration
+          this.socket.off("register:success", onRegisterSuccess);
+          this.socket.off("register:error", onRegisterError);
+          resolve(data);
+        };
 
-      this.socket.on("register:success", onRegisterSuccess);
-      this.socket.on("register:error", onRegisterError);
+        const onRegisterError = (err) => {
+          this.socket.off("register:success", onRegisterSuccess);
+          this.socket.off("register:error", onRegisterError);
+          reject(new Error(err.message || "Registration failed"));
+        };
 
-      setTimeout(() => {
-        this.socket.off("register:success", onRegisterSuccess);
-        this.socket.off("register:error", onRegisterError);
-        reject(new Error("Registration timeout"));
-      }, 15000);
-    });
+        this.socket.on("register:success", onRegisterSuccess);
+        this.socket.on("register:error", onRegisterError);
+
+        setTimeout(() => {
+          this.socket.off("register:success", onRegisterSuccess);
+          this.socket.off("register:error", onRegisterError);
+          reject(new Error("Registration timeout"));
+        }, 15000);
+      });
+    } catch (err) {
+      console.error("[SocketService] registerUser failed:", err);
+      throw err;
+    }
   }
 
   /**
    * Search for contact by CID (Just discovery)
    */
-  searchContact(otherCid) {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) return reject(new Error("Socket not connected"));
-      
-      this.socket.emit("search:cid", { myCid: this.userCid, otherCid });
+  async searchContact(otherCid) {
+    try {
+      // 1. Ensure we have a socket. If not, try to init with default URL
+      if (!this.socket) {
+        console.log("[SocketService] Socket missing during search, initializing...");
+        await this.connect(AppConfig.SOCKET.URL);
+      }
 
-      const onSuccess = (data) => {
-        this.socket.off("search:success", onSuccess);
-        this.socket.off("search:error", onError);
-        resolve(data);
-      };
+      // 2. Wait for connection if in progress
+      if (!this.isConnected) {
+        console.log("[SocketService] Waiting for connection before search...");
+        await this.waitForConnection();
+      }
 
-      const onError = (err) => {
-        this.socket.off("search:success", onSuccess);
-        this.socket.off("search:error", onError);
-        reject(new Error(err.message || "Search failed"));
-      };
+      return new Promise((resolve, reject) => {
+        this.socket.emit("search:cid", { myCid: this.userCid, otherCid });
 
-      this.socket.on("search:success", onSuccess);
-      this.socket.on("search:error", onError);
+        const onSuccess = (data) => {
+          this.socket.off("search:success", onSuccess);
+          this.socket.off("search:error", onError);
+          resolve(data);
+        };
 
-      setTimeout(() => {
-        this.socket.off("search:success", onSuccess);
-        this.socket.off("search:error", onError);
-        reject(new Error("Search timeout"));
-      }, 10000);
-    });
+        const onError = (err) => {
+          this.socket.off("search:success", onSuccess);
+          this.socket.off("search:error", onError);
+          reject(new Error(err.message || "Search failed"));
+        };
+
+        this.socket.on("search:success", onSuccess);
+        this.socket.on("search:error", onError);
+
+        setTimeout(() => {
+          this.socket.off("search:success", onSuccess);
+          this.socket.off("search:error", onError);
+          reject(new Error("Search timeout"));
+        }, 10000);
+      });
+    } catch (err) {
+      console.error("[SocketService] searchContact failed:", err);
+      throw err;
+    }
   }
 
   /**
    * Search for contact by Nickname
    */
-  searchContactByNickname(nickname) {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) return reject(new Error("Socket not connected"));
-      
-      this.socket.emit("search:nickname", { nickname });
+  async searchContactByNickname(nickname) {
+    try {
+      // 1. Ensure we have a socket
+      if (!this.socket) {
+        console.log("[SocketService] Socket missing during nickname search, initializing...");
+        await this.connect(AppConfig.SOCKET.URL);
+      }
 
-      const onSuccess = (data) => {
-        this.socket.off("search:success", onSuccess);
-        this.socket.off("search:error", onError);
-        resolve(data);
-      };
+      // 2. Wait for connection
+      if (!this.isConnected) {
+        console.log("[SocketService] Waiting for connection before nickname search...");
+        await this.waitForConnection();
+      }
 
-      const onError = (err) => {
-        this.socket.off("search:success", onSuccess);
-        this.socket.off("search:error", onError);
-        reject(new Error(err.message || "Search failed"));
-      };
+      return new Promise((resolve, reject) => {
+        this.socket.emit("search:nickname", { nickname });
 
-      this.socket.on("search:success", onSuccess);
-      this.socket.on("search:error", onError);
+        const onSuccess = (data) => {
+          this.socket.off("search:success", onSuccess);
+          this.socket.off("search:error", onError);
+          resolve(data);
+        };
 
-      setTimeout(() => {
-        this.socket.off("search:success", onSuccess);
-        this.socket.off("search:error", onError);
-        reject(new Error("Search timeout"));
-      }, 10000);
-    });
+        const onError = (err) => {
+          this.socket.off("search:success", onSuccess);
+          this.socket.off("search:error", onError);
+          reject(new Error(err.message || "Search failed"));
+        };
+
+        this.socket.on("search:success", onSuccess);
+        this.socket.on("search:error", onError);
+
+        setTimeout(() => {
+          this.socket.off("search:success", onSuccess);
+          this.socket.off("search:error", onError);
+          reject(new Error("Search timeout"));
+        }, 10000);
+      });
+    } catch (err) {
+      console.error("[SocketService] searchContactByNickname failed:", err);
+      throw err;
+    }
   }
 
   /**
    * Send Connection Request
    */
-  sendConnectionRequest(toCid) {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) return reject(new Error("Socket not connected"));
-      
-      this.socket.emit("contact:request:send", { fromCid: this.userCid, toCid });
+  async sendConnectionRequest(toCid) {
+    try {
+      if (!this.socket) {
+        await this.connect(AppConfig.SOCKET.URL);
+      }
+      if (!this.isConnected) {
+        await this.waitForConnection();
+      }
 
-      const onSuccess = (data) => {
-        this.socket.off("contact:request:success", onSuccess);
-        this.socket.off("contact:request:error", onError);
-        resolve(data);
-      };
+      return new Promise((resolve, reject) => {
+        this.socket.emit("contact:request:send", { fromCid: this.userCid, toCid });
 
-      const onError = (err) => {
-        this.socket.off("contact:request:success", onSuccess);
-        this.socket.off("contact:request:error", onError);
-        reject(new Error(err.message || "Failed to send request"));
-      };
+        const onSuccess = (data) => {
+          this.socket.off("contact:request:success", onSuccess);
+          this.socket.off("contact:request:error", onError);
+          resolve(data);
+        };
 
-      this.socket.on("contact:request:success", onSuccess);
-      this.socket.on("contact:request:error", onError);
-    });
+        const onError = (err) => {
+          this.socket.off("contact:request:success", onSuccess);
+          this.socket.off("contact:request:error", onError);
+          reject(new Error(err.message || "Failed to send request"));
+        };
+
+        this.socket.on("contact:request:success", onSuccess);
+        this.socket.on("contact:request:error", onError);
+      });
+    } catch (err) {
+      console.error("[SocketService] sendConnectionRequest failed:", err);
+      throw err;
+    }
   }
 
   /**
@@ -401,6 +552,51 @@ class SocketService {
   addContactDirect(toCid) {
     if (!this.socket) return;
     this.socket.emit("contact:add_direct", { fromCid: this.userCid, toCid });
+  }
+
+  /**
+   * WebRTC Call Signaling Methods
+   */
+  emitCallOffer(receiverId, callerName, callType, callId, offerSDP) {
+    if (!this.socket) return;
+    this.socket.emit("call:offer", { 
+      receiverId, 
+      callerName, 
+      callType, 
+      callId, 
+      offerSDP,
+      callerId: this.userCid
+    });
+  }
+
+  emitCallRinging(callId, callerId) {
+    if (!this.socket) return;
+    this.socket.emit("call:ringing", { callId, callerId });
+  }
+
+  emitCallAnswer(callId, callerId, answerSDP) {
+    if (!this.socket) return;
+    this.socket.emit("call:answer", { callId, callerId, answerSDP });
+  }
+
+  emitIceCandidate(callId, receiverId, candidate) {
+    if (!this.socket) return;
+    this.socket.emit("call:ice-candidate", { callId, receiverId, candidate });
+  }
+
+  emitCallReject(callId, callerId, reason = 'rejected') {
+    if (!this.socket) return;
+    this.socket.emit("call:reject", { callId, callerId, reason });
+  }
+
+  emitCallEnd(callId, otherId) {
+    if (!this.socket) return;
+    this.socket.emit("call:end", { callId, otherId });
+  }
+
+  emitCallBusy(callId, callerId) {
+    if (!this.socket) return;
+    this.socket.emit("call:busy", { callId, callerId });
   }
 
   /**
@@ -421,11 +617,45 @@ class SocketService {
   }
 
   /**
+   * Emit Message Delivered Status
+   */
+  emitMessageDelivered(roomId, groupId, messageId) {
+    if (!this.socket) return;
+    this.socket.emit("message:delivered", { 
+      roomId, 
+      groupId, 
+      messageId, 
+      receiverCid: this.userCid 
+    });
+  }
+
+  /**
+   * Emit Message Read Status
+   */
+  emitMessageRead(roomId, groupId, messageId) {
+    if (!this.socket) return;
+    this.socket.emit("message:read", { 
+      roomId, 
+      groupId, 
+      messageId, 
+      receiverCid: this.userCid 
+    });
+  }
+
+  /**
    * Delete message
    */
   deleteMessage(roomId, messageId) {
     if (!this.socket) return;
     this.socket.emit("message:delete", { roomId, messageId });
+  }
+
+  /**
+   * Delete multiple messages (Bulk)
+   */
+  deleteMessagesBulk(roomId, messageIds) {
+    if (!this.socket || !messageIds || messageIds.length === 0) return;
+    this.socket.emit("message:delete_bulk", { roomId, messageIds });
   }
 
   /**
@@ -447,27 +677,37 @@ class SocketService {
   /**
    * Fetch chat history (Sync)
    */
-  getChatHistory(roomId) {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) return reject(new Error("Socket not connected"));
+  async getChatHistory(roomId) {
+    try {
+      if (!this.socket) {
+        await this.connect(AppConfig.SOCKET.URL);
+      }
+      if (!this.isConnected) {
+        await this.waitForConnection();
+      }
 
-      this.socket.emit("room:getHistory", { roomId });
+      return new Promise((resolve, reject) => {
+        this.socket.emit("room:getHistory", { roomId });
 
-      const onHistory = (data) => {
-        this.socket.off("room:history", onHistory);
-        this.socket.off("room:error", onError);
-        resolve(data);
-      };
+        const onHistory = (data) => {
+          this.socket.off("room:history", onHistory);
+          this.socket.off("room:error", onError);
+          resolve(data);
+        };
 
-      const onError = (err) => {
-        this.socket.off("room:history", onHistory);
-        this.socket.off("room:error", onError);
-        reject(new Error(err.message || "Failed to fetch history"));
-      };
+        const onError = (err) => {
+          this.socket.off("room:history", onHistory);
+          this.socket.off("room:error", onError);
+          reject(new Error(err.message || "Failed to fetch history"));
+        };
 
-      this.socket.on("room:history", onHistory);
-      this.socket.on("room:error", onError);
-    });
+        this.socket.on("room:history", onHistory);
+        this.socket.on("room:error", onError);
+      });
+    } catch (err) {
+      console.error("[SocketService] getChatHistory failed:", err);
+      throw err;
+    }
   }
 
   joinRoom(roomId) {
@@ -475,6 +715,32 @@ class SocketService {
     this.socket.emit("room:join", { roomId });
     return Promise.resolve();
   }
+
+  leaveRoom(roomId) {
+    if (!this.socket) return;
+    this.socket.emit("room:leave", { roomId });
+  }
+
+  /**
+   * Mute a contact or group room
+   * @param {string} roomId The ID of the room or group
+   * @param {number|null} until Timestamp in ms, or null to unmute
+   */
+  muteContact(roomId, until) {
+    if (!this.socket || !this.userCid) return;
+    this.socket.emit("contact:mute", { 
+      cid: this.userCid, 
+      roomId, 
+      until 
+    });
+  }
+
+  clearChatHistory(roomId) {
+    if (!this.socket) return;
+    console.log(`[SocketService] Requesting server-side history clear for: ${roomId}`);
+    this.socket.emit("room:clearHistory", { roomId });
+  }
+
 
   waitForConnection(timeoutMs = 15000) {
     if (this.isConnected) return Promise.resolve();

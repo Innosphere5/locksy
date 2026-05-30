@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StatusBar,
   Platform,
+  Image,
 } from 'react-native';
 import { COLORS } from '../theme/colors';  // CORRECT: already in app/component/
 
@@ -106,25 +107,41 @@ export const CIDDisplay = ({
 export const ContactCard = ({
   name,
   cid,
-  avatar = '👤',
+  avatar,
   verified = false,
   style,
-}) => (
-  <View style={[styles.contactCard, style]}>
-    <View style={styles.contactAvatar}>
-      <Text style={{ fontSize: 24 }}>{avatar}</Text>
-    </View>
-    <View style={{ flex: 1, marginLeft: 12 }}>
-      <Text style={styles.contactName}>{name}</Text>
-      <Text style={styles.contactCID}>{cid}</Text>
-    </View>
-    {verified && (
-      <View style={styles.verifiedBadge}>
-        <Text style={styles.verifiedText}>✓ Verified</Text>
+}) => {
+  const displayAvatar = avatar || '👤';
+  const isUrl = typeof displayAvatar === 'string' && 
+    (displayAvatar.startsWith('http') || 
+     displayAvatar.startsWith('data:') || 
+     displayAvatar.startsWith('file:') || 
+     displayAvatar.startsWith('content:'));
+  
+  return (
+    <View style={[styles.contactCard, style]}>
+      <View style={[styles.contactAvatar, isUrl && { backgroundColor: 'transparent' }]}>
+        {isUrl ? (
+          <Image 
+            source={{ uri: displayAvatar }} 
+            style={{ width: '100%', height: '100%', resizeMode: 'cover' }} 
+          />
+        ) : (
+          <Text style={{ fontSize: 24 }}>{displayAvatar}</Text>
+        )}
       </View>
-    )}
-  </View>
-);
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={styles.contactName}>{name}</Text>
+        <Text style={styles.contactCID}>{cid}</Text>
+      </View>
+      {verified && (
+        <View style={styles.verifiedBadge}>
+          <Text style={styles.verifiedText}>✓ Verified</Text>
+        </View>
+      )}
+    </View>
+  );
+};
 
 export const CheckItem = ({ text, style }) => (
   <View style={[styles.checkRow, style]}>
@@ -242,6 +259,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   contactName: { fontSize: 17, fontWeight: '700', color: COLORS.text },
   contactCID: {

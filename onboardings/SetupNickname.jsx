@@ -13,15 +13,12 @@ import {
 } from 'react-native';
 import { COLORS, SPACING, RADIUS } from './theme';
 
-function generateCID() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
+
 
 export default function SetupNickname({ navigation }) {
   const [nickname, setNickname] = useState('Phantom_X');
   const [focused, setFocused] = useState(false);
-  const [cid] = useState(generateCID);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const cardAnim = useRef(new Animated.Value(20)).current;
 
@@ -41,7 +38,7 @@ export default function SetupNickname({ navigation }) {
       Alert.alert('Too Short', 'Nickname must be at least 2 characters.');
       return;
     }
-    navigation.navigate('SetupProfilePhoto', { nickname: nickname.trim(), cid });
+    navigation.replace('SetupProfilePhoto', { nickname: nickname.trim() });
   };
 
   const avatarLetter = nickname.trim()[0]?.toUpperCase() || '?';

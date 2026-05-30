@@ -149,6 +149,15 @@ export const downloadAndDecryptFile = async (sessionKey, mediaMetadata) => {
 
     const { downloadUrl, s3_key, nonce: nonceB64, file_name } = urlResponse.data;
 
+    // --- CACHE CHECK ---
+    const fileExt = file_name.split('.').pop();
+    const cachedUri = `${FileSystem.cacheDirectory}e2ee_${mediaId}.${fileExt}`;
+    const fileInfo = await FileSystem.getInfoAsync(cachedUri);
+    if (fileInfo.exists) {
+      console.log(`[E2EE-Service] Using cached file: ${cachedUri}`);
+      return cachedUri;
+    }
+
     // 2. Fetch Encrypted Binary
     const response = await fetch(downloadUrl);
     const blob = await response.blob();
@@ -169,16 +178,14 @@ export const downloadAndDecryptFile = async (sessionKey, mediaMetadata) => {
       throw new Error("Decryption failed (Possible tampering or wrong key)");
     }
 
-    // 4. Save to temporary storage
-    const b64Decrypted = uint8ToB64(decryptedBytes);
-    const fileExt = file_name.split('.').pop();
-    const tempUri = `${FileSystem.cacheDirectory}e2ee_${Date.now()}.${fileExt}`;
+    // 4. Save to temporary cache
+    const fileUri = cachedUri;
     
-    await FileSystem.writeAsStringAsync(tempUri, b64Decrypted, {
+    await FileSystem.writeAsStringAsync(fileUri, uint8ToB64(decryptedBytes), {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    return tempUri;
+    return fileUri;
   } catch (error) {
     console.error("[E2EE-Service] Download/Decrypt Error:", error);
     throw error;

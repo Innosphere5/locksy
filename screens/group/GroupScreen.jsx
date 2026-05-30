@@ -7,16 +7,22 @@ import {
   StyleSheet,
   StatusBar,
   SafeAreaView,
+  Image,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SHADOWS } from '../../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroups } from '../../context/GroupsContext';
 import { useCIDContext } from '../../context/CIDContext';
 
 const GroupItem = ({ item, onPress }) => (
   <TouchableOpacity style={styles.groupItem} onPress={onPress} activeOpacity={0.75}>
     <View style={styles.groupAvatar}>
-      <MaterialCommunityIcons name="account-group" size={24} color={COLORS.primary} />
+      {item.groupLogo ? (
+        <Image source={{ uri: item.groupLogo }} style={styles.avatarImage} />
+      ) : (
+        <MaterialCommunityIcons name="account-group" size={24} color={COLORS.primary} />
+      )}
     </View>
     <View style={styles.groupInfo}>
       <View style={styles.groupRow}>
@@ -43,6 +49,7 @@ const GroupItem = ({ item, onPress }) => (
 export default function GroupsScreen({ navigation }) {
   const { groups, groupInvites, setSelectedGroupId, acceptGroupInvite, rejectGroupInvite } = useGroups();
   const { userNickname } = useCIDContext();
+  const insets = useSafeAreaInsets();
 
   const handleGroupPress = (group) => {
     setSelectedGroupId(group.groupId);
@@ -90,7 +97,7 @@ export default function GroupsScreen({ navigation }) {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Groups</Text>
@@ -161,21 +168,21 @@ export default function GroupsScreen({ navigation }) {
       )}
 
       {/* Bottom Tab Bar */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity style={styles.tabItem} onPress={() => navigation.navigate('Chats')}>
-          <Ionicons name="chatbubble-outline" size={22} color={COLORS.tabInactive} />
-          <Text style={styles.tabLabel}>Chats</Text>
+      <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Chats')}>
+          <Text style={styles.navEmoji}>💬</Text>
+          <Text style={styles.navLabel}>Chats</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.tabItem, styles.tabActive]}>
-          <MaterialCommunityIcons name="account-group" size={22} color={COLORS.primary} />
-          <Text style={[styles.tabLabel, styles.tabLabelActive]}>Groups</Text>
+        <TouchableOpacity style={styles.navItem}>
+          <Text style={styles.navEmoji}>👥</Text>
+          <Text style={[styles.navLabel, styles.navActive]}>Groups</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => navigation.navigate('Vault')}>
-          <Ionicons name="lock-closed-outline" size={22} color={COLORS.tabInactive} />
-          <Text style={styles.tabLabel}>Vault</Text>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Vault')}>
+          <Text style={styles.navEmoji}>🔒</Text>
+          <Text style={styles.navLabel}>Vault</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -227,6 +234,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   groupInfo: {
     flex: 1,
@@ -303,29 +315,22 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontFamily: FONTS.bold,
   },
-  tabBar: {
-    flexDirection: 'row',
+  bottomNav: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    backgroundColor: "#FFFFFF",
+    paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingBottom: 20,
-    paddingTop: 10,
-    backgroundColor: COLORS.background,
+    borderTopColor: "#F1F5F9",
   },
-  tabItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-  },
-  tabActive: {},
-  tabLabel: {
+  navItem: { alignItems: "center", gap: 4 },
+  navEmoji: { fontSize: 24 },
+  navLabel: {
     fontSize: 11,
-    color: COLORS.tabInactive,
-    fontFamily: FONTS.regular,
+    color: "#94A3B8",
+    fontWeight: "500",
   },
-  tabLabelActive: {
-    color: COLORS.primary,
-    fontFamily: FONTS.semiBold,
-  },
+  navActive: { color: "#3B82F6", fontWeight: "600" },
   emptyState: {
     flex: 1,
     alignItems: 'center',

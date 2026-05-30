@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
   TextInput,
   SafeAreaView,
   StatusBar,
@@ -12,53 +11,62 @@ import {
   Modal,
   SectionList,
   Alert,
+  Image,
 } from 'react-native';
 import { COLORS, SPACING, RADIUS } from '../../theme/colors';
-
-const CONTACTS_DATA = [
-  { id: '1', name: 'Ghost_Fox', avatar: '🦊', online: true, verified: true, type: 'user', avatarBg: '#EEF2FF' },
-  { id: '2', name: 'Shadow_Wolf', avatar: '🐺', online: false, verified: false, type: 'user', avatarBg: '#EDE9FE' },
-  { id: '3', name: 'Cipher_Eagle', avatar: '🦅', online: true, verified: true, type: 'user', avatarBg: '#D1FAE5' },
-];
-
-const GROUPS_DATA = [
-  { id: '4', name: 'OP-SECTOR-7', avatar: '👥', verified: false, type: 'group', avatarBg: '#DBEAFE' },
-];
-
-const SECTIONS = [
-  {
-    title: 'CONTACTS',
-    data: CONTACTS_DATA,
-  },
-  {
-    title: 'GROUPS',
-    data: GROUPS_DATA,
-  },
-];
+import { useCIDContext } from '../../context/CIDContext';
+import { useGroups } from '../../context/GroupsContext';
+import socketService from '../../utils/socketService';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function ForwardMessageScreen({ navigation, route }) {
-  const message = route?.params?.message || { text: 'Confirmed. ETA 20 min.' };
+  const { contacts, userNickname, userAvatar, userCID } = useCIDContext();
+  const { groups } = useGroups();
+  
+  const message = route?.params?.message || {};
   const [selected, setSelected] = useState([]);
   const [search, setSearch] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
 
-  // Filter all contacts and groups
-  const getAllContacts = () => {
-    return CONTACTS_DATA.concat(GROUPS_DATA);
-  };
+  // Normalize data for SectionList
+  const contactItems = (contacts || []).map(c => ({
+    id: c.cid,
+    name: c.nickname || 'Unknown',
+    avatar: c.avatar || '👤',
+    online: true,
+    verified: true,
+    type: 'user',
+    avatarBg: '#EEF2FF',
+    roomId: c.roomId || c.cid
+  }));
+
+  const groupItems = (groups || []).map(g => ({
+    id: g.groupId,
+    name: g.name,
+    avatar: g.groupLogo || '👥',
+    verified: false,
+    type: 'group',
+    avatarBg: '#DBEAFE',
+    roomId: g.groupId
+  }));
+
+  const sections = [
+    { title: 'CONTACTS', data: contactItems },
+    { title: 'GROUPS', data: groupItems },
+  ];
 
   const filtered = search.trim() === '' 
-    ? SECTIONS 
+    ? sections 
     : [
         {
           title: 'CONTACTS',
-          data: CONTACTS_DATA.filter((c) =>
+          data: contactItems.filter((c) =>
             c.name.toLowerCase().includes(search.toLowerCase())
           ),
         },
         {
           title: 'GROUPS',
-          data: GROUPS_DATA.filter((c) =>
+          data: groupItems.filter((c) =>
             c.name.toLowerCase().includes(search.toLowerCase())
           ),
         },
@@ -78,30 +86,48 @@ export default function ForwardMessageScreen({ navigation, route }) {
     setShowConfirm(true);
   };
 
-  const handleConfirmForward = useCallback(() => {
-    // Get selected contact names
-    const selectedContacts = getAllContacts().filter(c => selected.includes(c.id));
-    const contactNames = selectedContacts.map(c => c.name).join(', ');
-
-    // Close modal first
+  const handleConfirmForward = useCallback(async () => {
+    const allItems = [...contactItems, ...groupItems];
+    const selectedItems = allItems.filter(item => selected.includes(item.id));
+    
     setShowConfirm(false);
 
-    // Navigate on next frame to avoid state change during navigation
-    setTimeout(() => {
+    try {
+      for (const recipient of selectedItems) {
+        // Prepare forwarding payload
+        const payload = {
+          ...message,
+          id: 'fwd-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+          isForwarded: true,
+          timestamp: Date.now(),
+        };
+
+        // If it's a group, use group emit
+        if (recipient.type === 'group') {
+          socketService.socket.emit("group:send_message", {
+            groupId: recipient.id,
+            senderCid: userCID,
+            message: payload,
+            senderNickname: userNickname,
+            senderAvatar: userAvatar
+          });
+        } else {
+          // One-to-one
+          const rid = recipient.roomId || recipient.id; 
+          socketService.sendMessage(rid, payload, userNickname, userAvatar);
+        }
+      }
+
       Alert.alert(
-        '✓ Message Forwarded',
-        `Message forwarded to ${selected.length} recipient${selected.length !== 1 ? 's' : ''}:\n\n${contactNames}`,
-        [
-          {
-            text: 'Done',
-            onPress: () => {
-              navigation.goBack();
-            },
-          },
-        ]
+        '✓ Forwarded',
+        `Message forwarded to ${selected.length} recipient${selected.length !== 1 ? 's' : ''}`,
+        [{ text: 'Done', onPress: () => navigation.goBack() }]
       );
-    }, 0);
-  }, [selected, navigation]);
+    } catch (err) {
+      console.error("[Forward] Failed to forward:", err);
+      Alert.alert("Error", "Failed to forward message to some recipients.");
+    }
+  }, [selected, message, navigation, userCID, userNickname, userAvatar, contactItems, groupItems]);
 
   const renderContactItem = ({ item }) => (
     <TouchableOpacity
@@ -114,7 +140,11 @@ export default function ForwardMessageScreen({ navigation, route }) {
     >
       <View style={styles.avatarContainer}>
         <View style={[styles.avatar, { backgroundColor: item.avatarBg }]}>
-          <Text style={styles.avatarEmoji}>{item.avatar}</Text>
+          {typeof item.avatar === 'string' && item.avatar.length > 2 ? (
+            <Image source={{ uri: item.avatar }} style={styles.avatarImg} />
+          ) : (
+            <Text style={styles.avatarEmoji}>{item.avatar}</Text>
+          )}
         </View>
         {item.online && <View style={styles.onlineIndicator} />}
       </View>
@@ -123,9 +153,7 @@ export default function ForwardMessageScreen({ navigation, route }) {
         <View style={styles.nameRow}>
           <Text style={styles.contactName}>{item.name}</Text>
           {item.verified && (
-            <View style={styles.verifiedBadge}>
-              <Text style={styles.verifiedText}>Verified</Text>
-            </View>
+            <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
           )}
         </View>
         <Text style={styles.contactStatus}>
@@ -140,7 +168,7 @@ export default function ForwardMessageScreen({ navigation, route }) {
         ]}
       >
         {selected.includes(item.id) && (
-          <Text style={styles.checkmark}>✓</Text>
+          <Ionicons name="checkmark" size={16} color={COLORS.white} />
         )}
       </View>
     </TouchableOpacity>
@@ -157,7 +185,7 @@ export default function ForwardMessageScreen({ navigation, route }) {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.6}>
-          <Text style={styles.backArrow}>←</Text>
+          <Ionicons name="arrow-back" size={24} color={COLORS.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Forward to...</Text>
         <View style={{ width: 40 }} />
@@ -166,14 +194,14 @@ export default function ForwardMessageScreen({ navigation, route }) {
       {/* Forwarding Status Banner */}
       <View style={styles.statusBanner}>
         <Text style={styles.statusLabel}>FORWARDING</Text>
-        <Text style={styles.statusText}>
-          {message.text || 'Confirmed. ETA 20 min.'}
+        <Text style={styles.statusText} numberOfLines={1}>
+          {message.text || (message.type === 'image' ? 'Photo' : 'Media file')}
         </Text>
       </View>
 
       {/* Search */}
       <View style={styles.searchContainer}>
-        <Text style={styles.searchIcon}>🔍</Text>
+        <Ionicons name="search" size={18} color={COLORS.gray400} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search contacts or groups..."
@@ -187,10 +215,9 @@ export default function ForwardMessageScreen({ navigation, route }) {
       <SectionList
         sections={filtered}
         keyExtractor={(item, index) => item.id + index}
-        renderItem={({ item }) => renderContactItem({ item })}
+        renderItem={renderContactItem}
         renderSectionHeader={renderSectionHeader}
         contentContainerStyle={styles.listContainer}
-        scrollEnabled
         stickySectionHeadersEnabled={false}
       />
 
@@ -222,11 +249,11 @@ export default function ForwardMessageScreen({ navigation, route }) {
 
             <View style={styles.messagePreview}>
               <View style={styles.previewIconRow}>
-                <Text style={styles.previewIcon}>💬</Text>
+                <Ionicons name="chatbubble-outline" size={16} color={COLORS.gray500} />
                 <Text style={styles.previewLabel}>Message</Text>
               </View>
               <Text style={styles.previewText} numberOfLines={3}>
-                {message.text || 'Confirmed. ETA 20 min.'}
+                {message.text || (message.type === 'image' ? 'Photo' : 'Media file')}
               </Text>
             </View>
 
@@ -268,11 +295,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.gray100,
   },
-  backArrow: {
-    fontSize: 24,
-    color: COLORS.primary,
-    fontWeight: '600',
-  },
   headerTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -307,13 +329,10 @@ const styles = StyleSheet.create({
     marginHorizontal: SPACING.lg,
     marginBottom: SPACING.lg,
     paddingHorizontal: SPACING.md,
-    height: 40,
+    height: 44,
     backgroundColor: COLORS.gray100,
     borderRadius: RADIUS.lg,
     gap: SPACING.sm,
-  },
-  searchIcon: {
-    fontSize: 16,
   },
   searchInput: {
     flex: 1,
@@ -360,6 +379,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImg: {
+    width: '100%',
+    height: '100%',
   },
   avatarEmoji: {
     fontSize: 22,
@@ -389,18 +413,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.dark,
   },
-  verifiedBadge: {
-    borderWidth: 1,
-    borderColor: COLORS.success,
-    borderRadius: RADIUS.sm,
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 2,
-  },
-  verifiedText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: COLORS.success,
-  },
   contactStatus: {
     fontSize: 12,
     color: COLORS.gray400,
@@ -417,11 +429,6 @@ const styles = StyleSheet.create({
   checkboxSelected: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
-  },
-  checkmark: {
-    fontSize: 14,
-    color: COLORS.white,
-    fontWeight: '700',
   },
   footer: {
     position: 'absolute',
@@ -469,11 +476,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.lg,
     gap: SPACING.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
   },
   confirmTitle: {
     fontSize: 18,
@@ -496,9 +498,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACING.sm,
-  },
-  previewIcon: {
-    fontSize: 14,
   },
   previewLabel: {
     fontSize: 12,
@@ -539,240 +538,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.white,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.gray100,
-  },
-  backArrow: {
-    fontSize: 24,
-    color: COLORS.primary,
-    fontWeight: '600',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.dark,
-  },
-  statusBanner: {
-    marginHorizontal: SPACING.lg,
-    marginVertical: SPACING.md,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    backgroundColor: COLORS.primaryLight,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  statusLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.primary,
-    letterSpacing: 0.5,
-  },
-  statusText: {
-    fontSize: 13,
-    color: COLORS.primaryDark,
-    marginTop: 2,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.lg,
-    paddingHorizontal: SPACING.md,
-    height: 40,
-    backgroundColor: COLORS.gray100,
-    borderRadius: RADIUS.lg,
-    gap: SPACING.sm,
-  },
-  searchIcon: {
-    fontSize: 16,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: COLORS.dark,
-  },
-  listContainer: {
-    paddingHorizontal: SPACING.lg,
-    paddingBottom: 100,
-  },
-  contactItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.md,
-    marginBottom: SPACING.sm,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.gray100,
-    gap: SPACING.md,
-  },
-  contactItemSelected: {
-    backgroundColor: COLORS.primaryLight,
-    borderColor: COLORS.primary,
-  },
-  avatarContainer: {
-    position: 'relative',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarEmoji: {
-    fontSize: 18,
-  },
-  onlineIndicator: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: COLORS.online,
-    borderWidth: 2,
-    borderColor: COLORS.white,
-  },
-  contactInfo: {
-    flex: 1,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
-  },
-  contactName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.dark,
-  },
-  verifiedBadge: {
-    fontSize: 14,
-    color: COLORS.success,
-  },
-  contactStatus: {
-    fontSize: 12,
-    color: COLORS.gray400,
-    marginTop: 2,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: COLORS.gray300,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxSelected: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  checkmark: {
-    fontSize: 14,
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.lg,
-    backgroundColor: COLORS.white,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.gray100,
-    paddingBottom: Platform.OS === 'ios' ? SPACING.xl : SPACING.lg,
-  },
-  forwardBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.lg,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-  },
-  forwardBtnDisabled: {
-    opacity: 0.4,
-  },
-  forwardBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.white,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  confirmDialog: {
-    width: '80%',
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    gap: SPACING.md,
-  },
-  confirmTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.dark,
-  },
-  confirmText: {
-    fontSize: 14,
-    color: COLORS.gray500,
-  },
-  messagePreview: {
-    backgroundColor: COLORS.gray100,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-    gap: SPACING.sm,
-  },
-  previewLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.gray500,
-  },
-  previewText: {
-    fontSize: 14,
-    color: COLORS.dark,
-    lineHeight: 20,
-  },
-  confirmBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.lg,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-    marginTop: SPACING.md,
-  },
-  confirmBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.white,
-  },
-  cancelBtn: {
-    borderWidth: 1,
-    borderColor: COLORS.gray200,
-    borderRadius: RADIUS.lg,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.dark,
   },
 });

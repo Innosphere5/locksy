@@ -4,12 +4,16 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "lint": "expo lint"
   },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^13.0.0",
     "@expo/vector-icons": "^15.0.3",
+    "@firebase/app": "^0.14.11",
+    "@firebase/firestore": "^4.14.0",
     "@noble/ciphers": "^0.5.3",
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
@@ -25,33 +29,42 @@
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
     "expo-crypto": "15.0.9",
+    "expo-dev-client": "~6.0.21",
     "expo-device": "~8.0.10",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "19.0.22",
+    "expo-image": "~3.0.11",
     "expo-image-manipulator": "~14.0.8",
-    "expo-image-picker": "17.0.11",
+    "expo-image-picker": "~17.0.11",
     "expo-intent-launcher": "~13.0.8",
     "expo-linear-gradient": "~15.0.8",
     "expo-local-authentication": "~17.0.8",
-    "expo-notifications": "0.32.17",
+    "expo-notifications": "~0.32.17",
     "expo-screen-capture": "~8.0.9",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
     "expo-status-bar": "~3.0.9",
+    "firebase": "^10.13.2",
     "jpeg-js": "^0.4.4",
     "jsqr": "^1.4.0",
-    "lowdb": "^1.0.0",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-get-random-values": "1.11.0",
+    "react-native-incall-manager": "^4.2.1",
     "react-native-qrcode-svg": "^6.3.21",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
+    "react-native-webrtc": "^124.0.7",
     "screen-capture": "^1.0.2",
     "socket.io-client": "^4.8.3",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "zustand": "^5.0.13"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~10.0.0"
+  }
 }

@@ -8,12 +8,16 @@ import { CIDProvider } from "./context/CIDContext";
 import { SecurityProvider } from "./context/SecurityContext";
 
 import { navigationRef } from "./src/utils/navigation";
+import * as NotificationService from "./services/notificationService";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 // ── New Secure Flow ──────────────────────────────────────────────────────────
 import SplashScreen from "./src/screens/SplashScreen";
 import LoginScreen from "./src/screens/LoginScreen";
 import HomeScreen from "./src/screens/HomeScreen";
 import BlockedScreen from "./src/screens/BlockedScreen";
+import NotificationHandler from "./src/components/NotificationHandler";
+
 
 // ── Legacy Onboarding & Auth ──────────────────────────────────────────────────
 import LegacySplashScreen from "./onboardings/SplashScreen";
@@ -41,6 +45,7 @@ import SearchChatScreen from "./screens/chat/SearchChatScreen";
 // ── Group Chat Screens ────────────────────────────────────────────────────────
 import GroupScreen from "./screens/group/GroupScreen";
 import GroupChatScreen from "./screens/group/GroupChatScreen";
+import GroupSettingsScreen from "./screens/group/GroupSettingsScreen";
 import CreateGroupScreen from "./screens/group/CreateGroupScreen";
 import AddMembersScreen from "./screens/group/AddMembersScreen";
 import GroupInfoScreen from "./screens/group/GroupInfoScreen";
@@ -88,9 +93,12 @@ const Stack = createNativeStackNavigator();
 export default function App() {
   return (
     <CIDProvider>
+      <NotificationHandler />
       <SecurityProvider>
+
         <GroupsProvider>
           <CallsProvider>
+            <SafeAreaProvider>
             <NavigationContainer ref={navigationRef}>
               <StatusBar style="dark" />
               <Stack.Navigator
@@ -197,6 +205,11 @@ export default function App() {
                 <Stack.Screen
                   name="ApproveMembers"
                   component={ApproveMembersScreen}
+                  options={{ animation: "slide_from_right" }}
+                />
+                <Stack.Screen
+                  name="GroupSettings"
+                  component={GroupSettingsScreen}
                   options={{ animation: "slide_from_right" }}
                 />
                 <Stack.Screen
@@ -365,6 +378,7 @@ export default function App() {
               </Stack.Navigator>
               <GroupInviteModal />
             </NavigationContainer>
+            </SafeAreaProvider>
           </CallsProvider>
         </GroupsProvider>
       </SecurityProvider>

@@ -32,56 +32,291 @@ class MessageStorage {
         return;
       }
       
-      // Add createdAt if missing for auto-delete accuracy
       if (!message.createdAt) {
         message.createdAt = Date.now();
       }
 
-      // --- OFFLOAD LARGE MEDIA TO FILESYSTEM ---
+      // AUTO-DELETE LOGIC: Check for chat timer
+      const timerMs = await this.getChatTimer(roomId);
+      if (timerMs && timerMs > 0) {
+        message.expireAt = message.createdAt + timerMs;
+        console.log(`[MessageStorage] Auto-delete set for ${message.id}: expires in ${timerMs}ms`);
+      }
+
+      // LEAN STORAGE: Strip local URIs from media messages to keep DB tiny.
+      // We will re-derive them from mediaId on load.
       if (message.message && typeof message.message === 'object') {
-        const msgData = message.message;
-        const uri = msgData.uri || msgData.image;
-        
-        if (uri && uri.startsWith('data:')) {
-          try {
-            const extension = msgData.type === 'video' ? 'mp4' : (msgData.type === 'voice' ? 'm4a' : 'jpg');
-            const fileName = `media_${message.id}.${extension}`;
-            const fileUri = `${FileSystem.documentDirectory}${fileName}`;
-            
-            // Extract base64 data (strip prefix)
-            const base64Data = uri.split(',')[1] || uri;
-            
-            await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-            
-            // Update message to point to file instead of base64
-            if (msgData.uri) msgData.uri = fileUri;
-            if (msgData.image) msgData.image = fileUri;
-            msgData.isStoredInFile = true;
-            msgData.localFileUri = fileUri;
-            
-            console.log(`[MessageStorage] Media offloaded to file: ${fileName}`);
-          } catch (fsError) {
-            console.error('[MessageStorage] Failed to offload media to filesystem:', fsError);
-            // Fallback: Continue with base64 if it might fit, or let AsyncStorage fail
-          }
-        }
+        const msg = message.message;
+        if (msg.uri) msg.uri = null;
+        if (msg.image) msg.image = null;
       }
       
       messages.push(message);
       
-      // Limit to last 500 messages per room to keep storage lean
-      const limitedMessages = messages.slice(-500);
+      // REDUCED LIMIT: Keep only last 100 messages locally to avoid SQLITE_FULL
+      const limitedMessages = messages.slice(-100);
       
       await AsyncStorage.setItem(key, JSON.stringify(limitedMessages));
       
       // Update chat list summary
       await this._updateChatListSummary(roomId, message, message.groupId);
       
-      console.log(`[MessageStorage] Message saved to room ${roomId}`);
+      console.log(`[MessageStorage] Saved to ${roomId} (Limit: 100)`);
     } catch (error) {
-      console.error('[MessageStorage] Error saving message:', error);
+      if (error.message && (error.message.includes('database or disk is full') || error.message.includes('SQLITE_FULL') || error.message.includes('Row too big'))) {
+        console.warn(`[MessageStorage] ${error.message.includes('Row too big') ? 'Row too big' : 'Disk full'}! Attempting partial prune to recover...`);
+        
+        // RECOVERY: Prune 50% of the oldest messages in this specific room
+        try {
+          const key = `${MSG_PREFIX}${roomId}`;
+          const current = await AsyncStorage.getItem(key);
+          if (current) {
+            const msgs = JSON.parse(current);
+            const halved = msgs.slice(Math.floor(msgs.length / 2));
+            await AsyncStorage.setItem(key, JSON.stringify(halved));
+            console.log(`[MessageStorage] Recovered by pruning oldest 50% of messages in ${roomId}. Older history is safe in AWS Cloud.`);
+            
+            // Try saving the new message again
+            return await this.saveMessage(roomId, message);
+          }
+        } catch (innerError) {
+          console.error('[MessageStorage] Recovery failed, wiping room as last resort:', innerError);
+          await this.clearRoomMessages(roomId);
+        }
+      } else {
+        console.error('[MessageStorage] Error saving message:', error);
+      }
+    }
+  }
+
+  /**
+   * Update a specific message's fields without full overwrite logic
+   */
+  async updateMessage(roomId, messageId, updates) {
+    try {
+      if (!roomId || !messageId) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      if (!existingStr) return;
+
+      let messages = JSON.parse(existingStr);
+      let updated = false;
+
+      messages = messages.map(m => {
+        if (m.id === messageId) {
+          updated = true;
+          return { ...m, ...updates };
+        }
+        return m;
+      });
+
+      if (updated) {
+        await AsyncStorage.setItem(key, JSON.stringify(messages));
+        console.log(`[MessageStorage] Updated message ${messageId} in room ${roomId}`);
+      }
+    } catch (error) {
+      console.error('[MessageStorage] Error updating message:', error);
+      
+      const errorStr = error.toString();
+      if (errorStr.includes("Row too big") || errorStr.includes("SQLITE_FULL")) {
+        console.warn(`[MessageStorage] Row too big error during message update for room ${roomId}. Wiping local history.`);
+        const key = `${MSG_PREFIX}${roomId}`;
+        await AsyncStorage.removeItem(key);
+      }
+    }
+  }
+
+  /**
+   * Update a specific message's status (sent, delivered, read)
+   */
+  async updateMessageStatus(roomId, messageId, status) {
+    try {
+      if (!roomId || !messageId) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      if (!existingStr) return;
+
+      let messages = JSON.parse(existingStr);
+      let updated = false;
+
+      messages = messages.map(m => {
+        if (m.id === messageId) {
+          // Priority: read > delivered > sent
+          const statusOrder = { 'read': 3, 'delivered': 2, 'sent': 1, 'sending': 0 };
+          const currentOrder = statusOrder[m.status] || 0;
+          const newOrder = statusOrder[status] || 0;
+
+          if (newOrder > currentOrder) {
+            updated = true;
+            return { ...m, status: status };
+          }
+        }
+        return m;
+      });
+
+      if (updated) {
+        await AsyncStorage.setItem(key, JSON.stringify(messages));
+        console.log(`[MessageStorage] Updated message ${messageId} status to ${status} in room ${roomId}`);
+      }
+    } catch (error) {
+      console.error('[MessageStorage] Error updating message status:', error);
+      
+      const errorStr = error.toString();
+      if (errorStr.includes("Row too big") || errorStr.includes("SQLITE_FULL")) {
+        console.warn(`[MessageStorage] Row too big error during status update for room ${roomId}. Wiping local history.`);
+        const key = `${MSG_PREFIX}${roomId}`;
+        await AsyncStorage.removeItem(key);
+      }
+    }
+  }
+
+  /**
+   * Internal: Emergency cleanup when disk is full
+   * Targets specifically our media files instead of the root directory.
+   */
+  async _emergencyCleanup() {
+    try {
+      console.log('[MessageStorage] Starting emergency cleanup of media files...');
+      
+      const dirs = [FileSystem.cacheDirectory, FileSystem.documentDirectory];
+      let deletedCount = 0;
+
+      for (const dir of dirs) {
+        if (!dir) continue;
+        const files = await FileSystem.readDirectoryAsync(dir);
+        for (const file of files) {
+          if (file.startsWith('e2ee_') || file.startsWith('media_')) {
+            try {
+              await FileSystem.deleteAsync(`${dir}${file}`, { idempotent: true });
+              deletedCount++;
+            } catch (e) {}
+          }
+        }
+      }
+      
+      console.log(`[MessageStorage] Emergency cleanup completed. Deleted ${deletedCount} files.`);
+    } catch (e) {
+      console.error('[MessageStorage] Emergency cleanup failed:', e);
+    }
+  }
+
+  /**
+   * Remove media files older than a certain number of days
+   * @param {number} days 
+   */
+  /**
+   * Nuclear Option: Clear EVERYTHING from local storage to fix SQLITE_FULL
+   */
+  async wipeAllStorage() {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const locksyKeys = keys.filter(k => k.startsWith('losky_'));
+      await AsyncStorage.multiRemove(locksyKeys);
+      
+      // Also clear filesystem media
+      await this._emergencyCleanup();
+      
+      console.log('[MessageStorage] ALL local data wiped successfully.');
+    } catch (e) {
+      console.error('[MessageStorage] Wipe failed:', e);
+    }
+  }
+
+  /**
+   * Prune messages that have expired
+   */
+  async pruneExpiredMessages() {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const msgKeys = keys.filter(k => k.startsWith(MSG_PREFIX));
+      const now = Date.now();
+      let prunedCount = 0;
+      const prunedItems = []; // To return for server sync
+
+      for (const key of msgKeys) {
+        const roomId = key.replace(MSG_PREFIX, '');
+        try {
+          const stored = await AsyncStorage.getItem(key);
+          if (!stored) continue;
+
+          let messages = JSON.parse(stored);
+          
+          // Filter out expired messages
+          const expired = messages.filter(m => m.expireAt && m.expireAt < now);
+          
+          if (expired.length > 0) {
+            // Cleanup media for expired messages
+            for (const m of expired) {
+              const msgPayload = m.message;
+              const mediaId = m.media_id || (msgPayload && typeof msgPayload === 'object' ? msgPayload.media_id : null);
+              
+              prunedItems.push({ id: m.id, roomId, mediaId });
+
+              if (msgPayload && typeof msgPayload === 'object' && msgPayload.localFileUri) {
+                try {
+                  await FileSystem.deleteAsync(msgPayload.localFileUri, { idempotent: true });
+                } catch (e) {}
+              }
+            }
+            
+            messages = messages.filter(m => !m.expireAt || m.expireAt >= now);
+            await AsyncStorage.setItem(key, JSON.stringify(messages));
+            prunedCount += expired.length;
+            
+            // Update chat list summary if last message was pruned
+            if (messages.length > 0) {
+              await this._updateChatListSummary(roomId, messages[messages.length - 1]);
+            } else {
+              // Clear summary if no messages left
+              await this._updateChatListSummary(roomId, { message: "No messages", timestamp: new Date().toISOString() });
+            }
+          }
+        } catch (roomError) {
+          if (roomError.message && roomError.message.includes('Row too big')) {
+            console.warn(`[MessageStorage] Row too big error during prune for room ${roomId}. Wiping local history and relying on Cloud fallback.`);
+            await this.clearRoomMessages(roomId);
+          } else {
+            console.error(`[MessageStorage] Error pruning room ${roomId}:`, roomError);
+          }
+        }
+      }
+      
+      if (prunedCount > 0) {
+        console.log(`[MessageStorage] Pruned ${prunedCount} expired messages across all rooms.`);
+      }
+      return prunedItems;
+    } catch (error) {
+      console.error('[MessageStorage] Global error in pruneExpiredMessages:', error);
+      return [];
+    }
+  }
+
+  async pruneOldMedia(days = 7) {
+    try {
+      const now = Date.now();
+      const maxAge = days * 24 * 60 * 60 * 1000;
+      const dirs = [FileSystem.cacheDirectory, FileSystem.documentDirectory];
+      let prunedCount = 0;
+
+      for (const dir of dirs) {
+        if (!dir) continue;
+        const files = await FileSystem.readDirectoryAsync(dir);
+        for (const file of files) {
+          if (file.startsWith('e2ee_') || file.startsWith('media_')) {
+            const fileUri = `${dir}${file}`;
+            const info = await FileSystem.getInfoAsync(fileUri);
+            if (info.exists && (now - info.modificationTime * 1000 > maxAge)) {
+              await FileSystem.deleteAsync(fileUri, { idempotent: true });
+              prunedCount++;
+            }
+          }
+        }
+      }
+      if (prunedCount > 0) {
+        console.log(`[MessageStorage] Pruned ${prunedCount} old media files.`);
+      }
+    } catch (e) {
+      console.error('[MessageStorage] Failed to prune old media:', e);
     }
   }
 
@@ -98,16 +333,79 @@ class MessageStorage {
       if (!stored) return [];
 
       let messages = JSON.parse(stored);
+      const now = Date.now();
       
-      return messages;
+      // Filter out any messages that should have been pruned but weren't yet
+      return messages.filter(m => !m.expireAt || m.expireAt >= now);
     } catch (error) {
       if (error.message && error.message.includes('Row too big')) {
-        console.error('[MessageStorage] Row too big error! Wiping corrupted chat storage to recover:', roomId);
+        console.warn('[MessageStorage] Row too big error! Pruning local history and relying on Cloud fallback:', roomId);
+        
+        // RECOVERY: Clear local but keep a small chunk if possible, or just fetch fresh from server
         await this.clearRoomMessages(roomId);
+        console.log('[MessageStorage] Local storage cleared for room. History will be re-synced from AWS Cloud on next load.');
       } else {
         console.error('[MessageStorage] Error getting messages:', error);
       }
       return [];
+    }
+  }
+
+  /**
+   * Get unread count for a specific room
+   */
+  async getUnreadCount(roomId) {
+    try {
+      if (!roomId) return 0;
+      const key = `${MSG_PREFIX}${roomId}`;
+      try {
+        const stored = await AsyncStorage.getItem(key);
+        if (!stored) return 0;
+        const messages = JSON.parse(stored);
+        return messages.filter(m => m.sender === 'received' && !m.isRead).length;
+      } catch (itemError) {
+        if (itemError.message && itemError.message.includes('Row too big')) {
+          await this.clearRoomMessages(roomId);
+        }
+        return 0;
+      }
+    } catch (error) {
+      console.error('[MessageStorage] Error getting unread count:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Mark all messages as read in a room
+   */
+  async markAsRead(roomId) {
+    try {
+      if (!roomId) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      try {
+        const stored = await AsyncStorage.getItem(key);
+        if (!stored) return;
+        let messages = JSON.parse(stored);
+        let updated = false;
+        messages = messages.map(m => {
+          if (m.sender === 'received' && !m.isRead) {
+            updated = true;
+            return { ...m, isRead: true };
+          }
+          return m;
+        });
+        if (updated) {
+          await AsyncStorage.setItem(key, JSON.stringify(messages));
+          // Update summary to 0 unread
+          await this._updateChatListSummary(roomId, messages[messages.length - 1], null, 0);
+        }
+      } catch (itemError) {
+        if (itemError.message && itemError.message.includes('Row too big')) {
+          await this.clearRoomMessages(roomId);
+        }
+      }
+    } catch (error) {
+      console.error('[MessageStorage] Error marking as read:', error);
     }
   }
 
@@ -140,11 +438,101 @@ class MessageStorage {
   }
 
   /**
+   * Save message timer for a room (ms)
+   */
+  async saveChatTimer(roomId, ms) {
+    try {
+      const settings = (await this.getChatSettings(roomId)) || {};
+      settings.timer = ms;
+      await this.saveChatSettings(roomId, settings);
+      console.log(`[MessageStorage] Timer updated for ${roomId}: ${ms}ms`);
+
+      // RETROACTIVE PRUNING: Apply timer to existing messages
+      if (ms > 0) {
+        const key = `${MSG_PREFIX}${roomId}`;
+        const stored = await AsyncStorage.getItem(key);
+        if (stored) {
+          let messages = JSON.parse(stored);
+          let updated = false;
+          messages = messages.map(m => {
+            if (!m.expireAt) {
+              updated = true;
+              return { ...m, expireAt: (m.createdAt || Date.now()) + ms };
+            }
+            return m;
+          });
+          if (updated) {
+            await AsyncStorage.setItem(key, JSON.stringify(messages));
+            console.log(`[MessageStorage] Retroactively applied timer to ${messages.length} messages in ${roomId}`);
+            // Trigger a prune pass immediately to wipe them
+            return await this.pruneExpiredMessages();
+          }
+        }
+      }
+      return [];
+    } catch (error) {
+      console.error('[MessageStorage] Error saving chat timer:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get message timer for a room
+   */
+  async getChatTimer(roomId) {
+    try {
+      const settings = await this.getChatSettings(roomId);
+      return settings?.timer || 0;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Save mute status for a room
+   * @param {string} roomId 
+   * @param {number|null} until - Timestamp in ms, or null to unmute
+   */
+  async saveMuteStatus(roomId, until) {
+    try {
+      const settings = (await this.getChatSettings(roomId)) || {};
+      settings.mutedUntil = until;
+      await this.saveChatSettings(roomId, settings);
+      console.log(`[MessageStorage] Mute status updated for ${roomId}: ${until ? new Date(until).toLocaleString() : 'Unmuted'}`);
+    } catch (error) {
+      console.error('[MessageStorage] Error saving mute status:', error);
+    }
+  }
+
+  /**
+   * Check if a room is muted
+   */
+  async getMuteStatus(roomId) {
+    try {
+      const settings = await this.getChatSettings(roomId);
+      if (!settings || !settings.mutedUntil) return false;
+      
+      // Check if mute has expired
+      if (settings.mutedUntil < Date.now()) {
+        // Auto-unmute if expired
+        await this.saveMuteStatus(roomId, null);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
    * Get the list of all active chats with their last messages
    * @returns {Promise<Array>}
    */
   async getChatListSub() {
     try {
+      // PROACTIVE PRUNING: Cleanup expired messages whenever chat list is requested
+      await this.pruneExpiredMessages();
+
       const stored = await AsyncStorage.getItem(CHAT_LIST_KEY);
       return stored ? JSON.parse(stored) : [];
     } catch (error) {
@@ -156,7 +544,7 @@ class MessageStorage {
   /**
    * Internal: Update the summary of the last message in a chat
    */
-  async _updateChatListSummary(roomId, lastMessage, groupId = null) {
+  async _updateChatListSummary(roomId, lastMessage, groupId = null, unreadCount = null) {
     try {
       const targetId = groupId || roomId;
       if (!targetId) return;
@@ -176,12 +564,19 @@ class MessageStorage {
         else if (msgData.text) summaryText = msgData.text;
       }
 
+      // Calculate unread if not provided
+      let finalUnread = unreadCount;
+      if (finalUnread === null) {
+        finalUnread = await this.getUnreadCount(roomId);
+      }
+      
       const summary = {
         roomId: groupId ? null : roomId,
         groupId: groupId || null,
         lastMessage: summaryText,
         timestamp: lastMessage.timestamp || new Date().toISOString(),
         senderNickname: lastMessage.senderNickname,
+        unread: finalUnread,
       };
       
       if (index > -1) {
@@ -213,34 +608,60 @@ class MessageStorage {
     try {
       if (!roomId) return;
       const key = `${MSG_PREFIX}${roomId}`;
-      const existingStr = await AsyncStorage.getItem(key);
       
-      if (existingStr) {
-        const messages = JSON.parse(existingStr);
-        // Delete all associated files
-        for (const m of messages) {
-          if (m.message && typeof m.message === 'object' && m.message.localFileUri) {
-            try {
-              await FileSystem.deleteAsync(m.message.localFileUri, { idempotent: true });
-            } catch (e) {
-              console.warn('[MessageStorage] Failed to delete file during room clear:', e);
+      try {
+        const existingStr = await AsyncStorage.getItem(key);
+        if (existingStr) {
+          const messages = JSON.parse(existingStr);
+          // Delete all associated files
+          for (const m of messages) {
+            if (m.message && typeof m.message === 'object' && m.message.localFileUri) {
+              try {
+                await FileSystem.deleteAsync(m.message.localFileUri, { idempotent: true });
+              } catch (e) {
+                console.warn('[MessageStorage] Failed to delete file during room clear:', e);
+              }
             }
           }
         }
+      } catch (getItemError) {
+        // If we can't even get the item (e.g. Row too big), we must still proceed to remove it
+        console.warn(`[MessageStorage] Could not read ${key} for cleanup (${getItemError.message}). Proceeding with direct removal.`);
       }
 
       await AsyncStorage.removeItem(key);
       
-      // Update chat list to show no messages
+      // Update chat list to show 'Chat deleted' instead of removing the person
       const stored = await AsyncStorage.getItem(CHAT_LIST_KEY);
       let chatList = stored ? JSON.parse(stored) : [];
-      chatList = chatList.filter(c => c.roomId !== roomId);
-      await AsyncStorage.setItem(CHAT_LIST_KEY, JSON.stringify(chatList));
       
-      console.log(`[MessageStorage] History and files cleared for room ${roomId}`);
+      let updated = false;
+      chatList = chatList.map(c => {
+        if (c.roomId === roomId || c.groupId === roomId) {
+          updated = true;
+          return { 
+            ...c, 
+            lastMessage: "Chat history deleted", 
+            unread: 0, 
+            timestamp: new Date().toISOString() 
+          };
+        }
+        return c;
+      });
+
+      if (updated) {
+        await AsyncStorage.setItem(CHAT_LIST_KEY, JSON.stringify(chatList));
+      }
+      
+      console.log(`[MessageStorage] History cleared and list updated for room ${roomId}`);
     } catch (error) {
       console.error('[MessageStorage] Error clearing room messages:', error);
     }
+  }
+
+  // Alias for better naming in group contexts
+  async deleteAllMessages(roomId) {
+    return this.clearRoomMessages(roomId);
   }
 
   /**
@@ -294,41 +715,46 @@ class MessageStorage {
     try {
       if (!roomId || !messageId) return;
       const key = `${MSG_PREFIX}${roomId}`;
-      const existingStr = await AsyncStorage.getItem(key);
-      if (!existingStr) return;
-      
-      let messages = JSON.parse(existingStr);
-      const initialLength = messages.length;
-      messages = messages.filter(m => m.id !== messageId);
-      
-      if (messages.length !== initialLength) {
-        // Find the message(s) that were filtered out and cleanup their local files
-        const deletedMsgs = initialLength - messages.length;
-        const originalMessages = JSON.parse(existingStr);
-        const deletedItemIds = originalMessages.filter(m => !messages.some(nm => nm.id === m.id)).map(m => m.id);
+      try {
+        const existingStr = await AsyncStorage.getItem(key);
+        if (!existingStr) return;
         
-        for (const id of deletedItemIds) {
-           const item = originalMessages.find(m => m.id === id);
-           if (item && item.message && typeof item.message === 'object' && item.message.localFileUri) {
-             try {
-               await FileSystem.deleteAsync(item.message.localFileUri, { idempotent: true });
-               console.log(`[MessageStorage] Deleted file for message ${id}`);
-             } catch (e) {
-               console.warn('[MessageStorage] File cleanup failed during individual delete:', e);
+        let messages = JSON.parse(existingStr);
+        const initialLength = messages.length;
+        messages = messages.filter(m => m.id !== messageId);
+        
+        if (messages.length !== initialLength) {
+          // Find the message(s) that were filtered out and cleanup their local files
+          const originalMessages = JSON.parse(existingStr);
+          const deletedItemIds = originalMessages.filter(m => !messages.some(nm => nm.id === m.id)).map(m => m.id);
+          
+          for (const id of deletedItemIds) {
+             const item = originalMessages.find(m => m.id === id);
+             if (item && item.message && typeof item.message === 'object' && item.message.localFileUri) {
+               try {
+                 await FileSystem.deleteAsync(item.message.localFileUri, { idempotent: true });
+                 console.log(`[MessageStorage] Deleted file for message ${id}`);
+               } catch (e) {
+                 console.warn('[MessageStorage] File cleanup failed during individual delete:', e);
+               }
              }
-           }
-        }
+          }
 
-        await AsyncStorage.setItem(key, JSON.stringify(messages));
-        
-        // If the deleted message was the last one, update the chat summary
-        if (messages.length > 0) {
-           await this._updateChatListSummary(roomId, messages[messages.length - 1]);
-        } else {
-           // Provide a blank / reset summary if all messages are deleted
-           await this._updateChatListSummary(roomId, { message: "No messages", timestamp: new Date().toISOString() });
+          await AsyncStorage.setItem(key, JSON.stringify(messages));
+          
+          // If the deleted message was the last one, update the chat summary
+          if (messages.length > 0) {
+             await this._updateChatListSummary(roomId, messages[messages.length - 1]);
+          } else {
+             // Provide a blank / reset summary if all messages are deleted
+             await this._updateChatListSummary(roomId, { message: "No messages", timestamp: new Date().toISOString() });
+          }
+          console.log(`[MessageStorage] Deleted message ${messageId} from room ${roomId}`);
         }
-        console.log(`[MessageStorage] Deleted message ${messageId} from room ${roomId}`);
+      } catch (itemError) {
+        if (itemError.message && itemError.message.includes('Row too big')) {
+          await this.clearRoomMessages(roomId);
+        }
       }
     } catch (error) {
       console.error('[MessageStorage] Error deleting message:', error);
@@ -431,6 +857,35 @@ class MessageStorage {
       }
     } catch (error) {
       console.error('[MessageStorage] Error marking message as opened:', error);
+    }
+  }
+
+  /**
+   * Delete multiple messages from storage (Bulk)
+   */
+  async deleteMessagesBulk(roomId, messageIds) {
+    try {
+      if (!roomId || !messageIds || messageIds.length === 0) return;
+      const key = `${MSG_PREFIX}${roomId}`;
+      const existingStr = await AsyncStorage.getItem(key);
+      if (!existingStr) return;
+
+      let messages = JSON.parse(existingStr);
+      const toDelete = messages.filter(m => messageIds.includes(m.id));
+
+      for (const m of toDelete) {
+        if (m.message && typeof m.message === 'object' && m.message.localFileUri) {
+          try {
+            await FileSystem.deleteAsync(m.message.localFileUri, { idempotent: true });
+          } catch (e) {}
+        }
+      }
+
+      messages = messages.filter(m => !messageIds.includes(m.id));
+      await AsyncStorage.setItem(key, JSON.stringify(messages));
+      console.log(`[MessageStorage] Bulk deleted ${toDelete.length} messages in ${roomId}`);
+    } catch (error) {
+      console.error('[MessageStorage] Error in bulk deletion:', error);
     }
   }
 }

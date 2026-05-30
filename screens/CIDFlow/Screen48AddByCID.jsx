@@ -31,15 +31,22 @@ const Screen48AddByCID = ({ onNext, onBack }) => {
 
   const handleCharInput = (val, idx) => {
     const next = [...cid];
+    
+    if (val === '') {
+      next[idx] = '';
+      setCid(next);
+      return;
+    }
+
     const char = val.toUpperCase().slice(-1);
     
     // Only allow alphanumeric
-    if (char && /^[A-Z0-9]$/.test(char)) {
+    if (/^[A-Z0-9]$/.test(char)) {
       next[idx] = char;
       setCid(next);
 
       // Auto-focus next field
-      if (char && idx < 5) {
+      if (idx < 5) {
         inputRefs.current[idx + 1]?.focus();
       }
     }

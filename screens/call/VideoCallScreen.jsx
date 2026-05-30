@@ -10,59 +10,85 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SPACING } from '../../theme';
-import { useCalls } from '../../context/CallsContext';
+import { RTCView } from 'react-native-webrtc';
+import useCallStore from '../../src/store/useCallStore';
+import signalingService from '../../src/services/signalingService';
+import rtcService from '../../src/services/rtcService';
 
 const { height, width } = Dimensions.get('window');
 
-export default function VideoCallScreen({ navigation, route }) {
-  const { callInfo } = route?.params || {};
-  const {
-    endCall,
+export default function VideoCallScreen({ navigation }) {
+  const { 
+    remoteUser, 
+    localStream, 
+    remoteStream, 
+    isMuted, 
+    isSpeaker, 
+    isVideoEnabled,
     toggleMute,
     toggleSpeaker,
-    toggleCamera,
-    isMuted,
-    isSpeaker,
-    cameraOn,
-    updateCallDuration,
-  } = useCalls();
+    toggleVideo,
+    startTime, 
+    callStatus,
+    endReason
+  } = useCallStore();
+  
   const [duration, setDuration] = useState(0);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [controlsTimeout, setControlsTimeout] = useState(null);
 
-  // Default call info
-  const call = callInfo || {
-    id: '1',
-    name: 'Ghost_Fox',
-    avatar: '🦊',
-    type: 'video',
-    encrypted: true,
-    direction: 'incoming',
-  };
+  useEffect(() => {
+    return () => {
+      // Cleanup when unmounting
+      const currentStatus = useCallStore.getState().callStatus;
+      if (currentStatus !== 'idle' && currentStatus !== 'ended' && currentStatus !== 'failed') {
+        console.log('[VideoCallScreen] Unmounting while call active, ending call');
+        signalingService.endCall();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (callStatus === 'ended' || callStatus === 'failed') {
+      const timeout = setTimeout(() => {
+        navigation.navigate('Chats');
+      }, 2000);
+      return () => clearTimeout(timeout);
+    }
+  }, [callStatus]);
 
   // Timer effect
   useEffect(() => {
-    const interval = setInterval(() => {
-      setDuration((prev) => prev + 1);
-      updateCallDuration(duration + 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [duration]);
+    if (startTime) {
+      const interval = setInterval(() => {
+        setDuration(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [startTime]);
 
   // Auto-hide controls
   useEffect(() => {
-    if (controlsTimeout) {
-      clearTimeout(controlsTimeout);
-    }
+    resetControlsTimeout();
+    return () => controlsTimeout && clearTimeout(controlsTimeout);
+  }, []);
+
+  const resetControlsTimeout = () => {
+    if (controlsTimeout) clearTimeout(controlsTimeout);
     setControlsVisible(true);
     const timeout = setTimeout(() => {
       setControlsVisible(false);
     }, 5000);
     setControlsTimeout(timeout);
-  }, []);
+  };
 
   const toggleControls = () => {
-    setControlsVisible(!controlsVisible);
+    if (controlsVisible) {
+      setControlsVisible(false);
+      if (controlsTimeout) clearTimeout(controlsTimeout);
+    } else {
+      resetControlsTimeout();
+    }
   };
 
   // Format duration display (MM:SS)
@@ -72,9 +98,31 @@ export default function VideoCallScreen({ navigation, route }) {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const handleEndCall = () => {
-    endCall();
-    navigation.navigate('Calls');
+  const handleEndCall = async () => {
+    await signalingService.endCall();
+    navigation.navigate('Chats');
+  };
+
+  const toggleMuteLocal = () => {
+    toggleMute();
+    rtcService.toggleMute(!isMuted);
+    resetControlsTimeout();
+  };
+
+  const toggleCameraLocal = () => {
+    toggleVideo();
+    rtcService.toggleVideo(!isVideoEnabled);
+    resetControlsTimeout();
+  };
+
+  const handleSwitchCamera = () => {
+    rtcService.switchCamera();
+    resetControlsTimeout();
+  };
+
+  const call = remoteUser || {
+    name: 'Unknown',
+    avatar: '👤',
   };
 
   return (
@@ -87,22 +135,27 @@ export default function VideoCallScreen({ navigation, route }) {
         onPress={toggleControls}
         activeOpacity={1}
       >
-        {/* Placeholder for video - shows caller avatar when camera off */}
-        {!cameraOn ? (
-          <View style={styles.videoPlaceholder}>
-            <View style={styles.placeholderAvatar}>
-              <Text style={styles.placeholderAvatarEmoji}>{call.avatar}</Text>
-            </View>
-            <Text style={styles.cameraOffText}>Camera Off</Text>
-          </View>
+        {/* Remote Video */}
+        {remoteStream && isVideoEnabled ? (
+          <RTCView
+            streamURL={remoteStream.toURL()}
+            style={StyleSheet.absoluteFill}
+            objectFit="cover"
+          />
         ) : (
           <View style={styles.videoPlaceholder}>
-            <MaterialCommunityIcons
-              name="video-outline"
-              size={64}
-              color={COLORS.textMuted}
-            />
-            <Text style={styles.cameraOffText}>Video Feed</Text>
+            <View style={styles.placeholderAvatar}>
+              <Text style={styles.placeholderAvatarEmoji}>
+                {callStatus === 'ended' ? '📵' : (isVideoEnabled ? call.avatar : '🎥')}
+              </Text>
+            </View>
+            <Text style={styles.cameraOffText}>
+              {callStatus === 'ended' ? 
+                (endReason === 'busy' ? 'User is busy' : 
+                 endReason === 'no_answer' ? 'No Answer' : 
+                 endReason === 'rejected' ? 'Call Declined' : 'Call Ended') 
+                : (isVideoEnabled ? 'Connecting...' : 'Camera is off')}
+            </Text>
           </View>
         )}
 
@@ -116,42 +169,21 @@ export default function VideoCallScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* Remote video thumbnail (caller) */}
-        <View style={styles.remoteVideoContainer}>
-          <View style={styles.remoteAvatar}>
-            <Text style={styles.remoteAvatarEmoji}>{call.avatar}</Text>
-          </View>
-          
-          {/* Duration and name overlay on remote video */}
-          <View style={styles.remoteCaller}>
-            <Text style={styles.remoteCallerName}>{call.name}</Text>
-            <Text style={styles.remoteDuration}>{formatDuration(duration)}</Text>
-          </View>
-
-          {/* Verification code */}
-          {controlsVisible && (
-            <View style={styles.remoteVerification}>
-              <MaterialCommunityIcons
-                name="check-circle"
-                size={12}
-                color={COLORS.success}
-              />
-              <Text style={styles.remoteVerificationText}>A3F9288C</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Local video preview (small) */}
-        {controlsVisible && (
+        {/* Local Video Preview (Picture in Picture) */}
+        {localStream && isVideoEnabled && (
           <View style={styles.localVideoContainer}>
-            <View style={styles.localVideo}>
-              <Ionicons
-                name="camera"
-                size={20}
-                color={COLORS.textMuted}
-              />
-            </View>
-            <Text style={styles.localVideoLabel}>You</Text>
+            <RTCView
+              streamURL={localStream.toURL()}
+              style={styles.localVideo}
+              objectFit="cover"
+              zOrder={2}
+            />
+            <TouchableOpacity 
+              style={styles.switchCameraBtn}
+              onPress={handleSwitchCamera}
+            >
+              <Ionicons name="camera-reverse" size={16} color={COLORS.white} />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -165,7 +197,7 @@ export default function VideoCallScreen({ navigation, route }) {
                   styles.controlIconBtn,
                   isMuted && styles.controlIconBtnActive,
                 ]}
-                onPress={toggleMute}
+                onPress={toggleMuteLocal}
                 activeOpacity={0.8}
               >
                 <MaterialCommunityIcons
@@ -181,7 +213,10 @@ export default function VideoCallScreen({ navigation, route }) {
                   styles.controlIconBtn,
                   isSpeaker && styles.controlIconBtnActive,
                 ]}
-                onPress={toggleSpeaker}
+                onPress={() => {
+                  toggleSpeaker();
+                  rtcService.setSpeaker(!isSpeaker);
+                }}
                 activeOpacity={0.8}
               >
                 <MaterialCommunityIcons
@@ -195,15 +230,15 @@ export default function VideoCallScreen({ navigation, route }) {
               <TouchableOpacity
                 style={[
                   styles.controlIconBtn,
-                  !cameraOn && styles.controlIconBtnActive,
+                  !isVideoEnabled && styles.controlIconBtnActive,
                 ]}
-                onPress={toggleCamera}
+                onPress={toggleCameraLocal}
                 activeOpacity={0.8}
               >
                 <MaterialCommunityIcons
-                  name={cameraOn ? 'camera' : 'camera-off'}
+                  name={isVideoEnabled ? 'video' : 'video-off'}
                   size={20}
-                  color={!cameraOn ? '#EF4444' : COLORS.white}
+                  color={!isVideoEnabled ? '#EF4444' : COLORS.white}
                 />
               </TouchableOpacity>
 
@@ -229,7 +264,12 @@ export default function VideoCallScreen({ navigation, route }) {
       {!controlsVisible && (
         <View style={styles.statusIndicator}>
           <View style={styles.durationBadge}>
-            <Text style={styles.durationText}>{formatDuration(duration)}</Text>
+            <Text style={styles.durationText}>
+              {callStatus === 'connected' ? formatDuration(duration) : 
+               callStatus === 'ringing' ? 'Ringing...' : 
+               callStatus === 'connecting' ? 'Connecting...' : 
+               'Calling...'}
+            </Text>
           </View>
         </View>
       )}
@@ -337,15 +377,30 @@ const styles = StyleSheet.create({
     zIndex: 15,
   },
   localVideo: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 100,
+    height: 150,
+    borderRadius: 12,
+    backgroundColor: '#000',
     borderWidth: 2,
     borderColor: COLORS.primary,
-    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  switchCameraBtn: {
+    position: 'absolute',
+    top: -10,
+    right: -10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 30,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
   localVideoLabel: {
     color: COLORS.white,

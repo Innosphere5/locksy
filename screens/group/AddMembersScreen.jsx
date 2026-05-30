@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   StatusBar,
@@ -27,6 +28,14 @@ export default function AddMembersScreen({ navigation, route }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [usernameToAdd, setUsernameToAdd] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+
+  // AUTO-EXIT: If group is removed (e.g. while on this screen), go back
+  React.useEffect(() => {
+    if (groupId && !group) {
+      console.log(`[AddMembers] Group ${groupId} no longer exists, exiting...`);
+      navigation.navigate('Groups');
+    }
+  }, [group, groupId, navigation]);
 
   const handleAddByUsername = async () => {
     if (!usernameToAdd.trim()) return;
@@ -58,7 +67,14 @@ export default function AddMembersScreen({ navigation, route }) {
 
   // Filter contacts not already in group and match search query
   const availableContacts = useMemo(() => {
-    let filtered = contacts.filter(c => !group?.members?.some(m => m.cid === c.cid));
+    // Ensure unique contacts by CID
+    const uniqueMap = new Map();
+    contacts.forEach(c => {
+      if (!uniqueMap.has(c.cid)) uniqueMap.set(c.cid, c);
+    });
+    const uniqueContacts = Array.from(uniqueMap.values());
+
+    let filtered = uniqueContacts.filter(c => !group?.members?.some(m => m.cid === c.cid));
     if (searchQuery.trim()) {
       filtered = filtered.filter(c => 
         c.nickname?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -174,7 +190,7 @@ export default function AddMembersScreen({ navigation, route }) {
               const isSelected = selectedMembers.some(m => m.cid === contact.cid);
               return (
                 <TouchableOpacity 
-                  key={contact.cid}
+                  key={contact.cid ? `contact-${contact.cid}-${i}` : `contact-idx-${i}`}
                   style={styles.memberRow}
                   onPress={() => toggleMember(contact)}
                   activeOpacity={0.7}

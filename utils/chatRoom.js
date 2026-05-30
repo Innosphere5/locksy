@@ -26,10 +26,12 @@ export const AUTO_DESTRUCT_OPTIONS = [
   { label: '1 min',   ms: 60 * 1000 },
   { label: '5 min',   ms: 5  * 60 * 1000 },
   { label: '1 hour',  ms: 60 * 60 * 1000 },
+  { label: '2 hours', ms: 2  * 60 * 60 * 1000 },
   { label: '6 hours', ms: 6  * 60 * 60 * 1000 },
   { label: '12 hours',ms: 12 * 60 * 60 * 1000 },
   { label: '24 hours',ms: 24 * 60 * 60 * 1000 },
-  { label: '48 hours',ms: 48 * 60 * 60 * 1000 },
+  { label: '1 day',   ms: 24 * 60 * 60 * 1000 },
+  { label: '7 days',  ms: 7  * 24 * 60 * 60 * 1000 },
 ];
 
 // ── Room ID ────────────────────────────────────────────────────────

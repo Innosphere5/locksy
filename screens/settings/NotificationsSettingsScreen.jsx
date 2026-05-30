@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 
 /**
  * NotificationsSettingsScreen - Screen 61
@@ -23,6 +25,38 @@ export default function NotificationsSettingsScreen({ navigation }) {
   const [showMessagePreview, setShowMessagePreview] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+
+  React.useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const keys = ['losky_silent_notif', 'losky_show_sender', 'losky_show_preview', 'losky_sound', 'losky_vibrate'];
+      const results = await AsyncStorage.multiGet(keys);
+      results.forEach(([key, value]) => {
+        if (value !== null) {
+          const val = value === 'true';
+          if (key === 'losky_silent_notif') setSilentNotifications(val);
+          if (key === 'losky_show_sender') setShowSenderName(val);
+          if (key === 'losky_show_preview') setShowMessagePreview(val);
+          if (key === 'losky_sound') setSoundEnabled(val);
+          if (key === 'losky_vibrate') setVibrationEnabled(val);
+        }
+      });
+    } catch (e) {
+      console.error("[NotificationsSettings] Load error:", e);
+    }
+  };
+
+  const updateSetting = async (key, val, setter) => {
+    setter(val);
+    try {
+      await AsyncStorage.setItem(key, String(val));
+    } catch (e) {
+      console.error("[NotificationsSettings] Save error:", e);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -50,8 +84,12 @@ export default function NotificationsSettingsScreen({ navigation }) {
           </View>
           <View style={styles.notificationPreview}>
             <View style={styles.notifContent}>
-              <Text style={styles.notifSender}>Locksy</Text>
-              <Text style={styles.notifMessage}>New message · Content hidden</Text>
+              <Text style={styles.notifSender}>
+                {(silentNotifications || !showSenderName) ? 'Locksy' : 'Ghost_Fox'}
+              </Text>
+              <Text style={styles.notifMessage}>
+                {(silentNotifications || !showMessagePreview) ? 'New message · Content hidden' : 'Hey! Are we still meeting today?'}
+              </Text>
             </View>
           </View>
         </View>
@@ -73,7 +111,7 @@ export default function NotificationsSettingsScreen({ navigation }) {
             </View>
             <Switch
               value={silentNotifications}
-              onValueChange={setSilentNotifications}
+              onValueChange={(val) => updateSetting('losky_silent_notif', val, setSilentNotifications)}
               trackColor={{ false: COLORS.gray200, true: COLORS.success + '40' }}
               thumbColor={silentNotifications ? COLORS.success : COLORS.gray300}
             />
@@ -98,7 +136,7 @@ export default function NotificationsSettingsScreen({ navigation }) {
             </View>
             <Switch
               value={showSenderName}
-              onValueChange={setShowSenderName}
+              onValueChange={(val) => updateSetting('losky_show_sender', val, setShowSenderName)}
               disabled={silentNotifications}
               trackColor={{ false: COLORS.gray200, true: COLORS.primary + '40' }}
               thumbColor={showSenderName ? COLORS.primary : COLORS.gray300}
@@ -124,7 +162,7 @@ export default function NotificationsSettingsScreen({ navigation }) {
             </View>
             <Switch
               value={showMessagePreview}
-              onValueChange={setShowMessagePreview}
+              onValueChange={(val) => updateSetting('losky_show_preview', val, setShowMessagePreview)}
               disabled={silentNotifications}
               trackColor={{ false: COLORS.gray200, true: COLORS.warning + '40' }}
               thumbColor={showMessagePreview ? COLORS.warning : COLORS.gray300}

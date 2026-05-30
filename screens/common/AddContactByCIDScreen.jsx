@@ -27,6 +27,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import QRCode from "react-native-qrcode-svg";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from "../../theme";
 import { CIDContext } from "../../context/CIDContext";
 import socketService from "../../utils/socketService";
@@ -39,6 +40,7 @@ const { height: screenHeight } = Dimensions.get("screen");
  * User can view their CID and enter another user's CID to create a connection
  */
 export default function AddContactByCIDScreen({ navigation, route }) {
+  const insets = useSafeAreaInsets();
   // Auto-navigate when another user adds you as a contact
   useSocketNavigation();
   
@@ -431,7 +433,7 @@ export default function AddContactByCIDScreen({ navigation, route }) {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
 
       {/* Header */}
@@ -462,7 +464,7 @@ export default function AddContactByCIDScreen({ navigation, route }) {
         {/* Add Contact Section */}
         {renderAddContactSection()}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
