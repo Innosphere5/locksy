@@ -9,7 +9,8 @@ import { SecurityProvider } from "./context/SecurityContext";
 
 import { navigationRef } from "./src/utils/navigation";
 import * as NotificationService from "./services/notificationService";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { Platform, StyleSheet } from "react-native";
 
 // ── New Secure Flow ──────────────────────────────────────────────────────────
 import SplashScreen from "./src/screens/SplashScreen";
@@ -93,13 +94,14 @@ const Stack = createNativeStackNavigator();
 export default function App() {
   return (
     <CIDProvider>
-      <NotificationHandler />
       <SecurityProvider>
 
         <GroupsProvider>
           <CallsProvider>
             <SafeAreaProvider>
-            <NavigationContainer ref={navigationRef}>
+              <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }} edges={Platform.OS === 'android' ? ['top', 'bottom', 'left', 'right'] : []}>
+              <NavigationContainer ref={navigationRef}>
+              <NotificationHandler />
               <StatusBar style="dark" />
               <Stack.Navigator
                 initialRouteName="Splash"
@@ -377,7 +379,8 @@ export default function App() {
                 />
               </Stack.Navigator>
               <GroupInviteModal />
-            </NavigationContainer>
+              </NavigationContainer>
+              </SafeAreaView>
             </SafeAreaProvider>
           </CallsProvider>
         </GroupsProvider>

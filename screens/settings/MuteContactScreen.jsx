@@ -26,7 +26,7 @@ export default function MuteContactScreen({ navigation, route }) {
     avatar: '👻',
   };
 
-  const [selectedDuration, setSelectedDuration] = useState('1h');
+  const [selectedDuration, setSelectedDuration] = useState('none');
   const [isMuting, setIsMuting] = useState(false);
 
   const muteDurations = [
@@ -36,6 +36,36 @@ export default function MuteContactScreen({ navigation, route }) {
     { id: '1w', label: 'For 1 week', value: '1 week' },
     { id: 'always', label: 'Always', value: 'forever', warning: true },
   ];
+
+  React.useEffect(() => {
+    const fetchMuteStatus = async () => {
+      try {
+        if (!contact.roomId) return;
+        const settings = await messageStorage.getChatSettings(contact.roomId);
+        if (settings && settings.mutedUntil) {
+          const remainingMs = settings.mutedUntil - Date.now();
+          if (remainingMs > 0) {
+            if (remainingMs > 365 * 24 * 3600 * 1000) {
+              setSelectedDuration('always');
+            } else if (remainingMs > 24 * 3600 * 1000) {
+              setSelectedDuration('1w');
+            } else if (remainingMs > 3600 * 1000) {
+              setSelectedDuration('8h');
+            } else {
+              setSelectedDuration('1h');
+            }
+          } else {
+            setSelectedDuration('none');
+          }
+        } else {
+          setSelectedDuration('none');
+        }
+      } catch (error) {
+        console.error("[MuteContact] Failed to load mute status:", error);
+      }
+    };
+    fetchMuteStatus();
+  }, [contact.roomId]);
 
   const handleMute = async () => {
     if (isMuting) return;

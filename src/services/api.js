@@ -14,6 +14,10 @@ const api = axios.create({
 // Interceptor to add token to requests
 api.interceptors.request.use(
   async (config) => {
+    if (config.url) {
+      config.url = config.url.replace(/^\/+/, '');
+    }
+
     const token = await SecureStore.getItemAsync('locksy_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;

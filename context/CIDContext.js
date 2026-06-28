@@ -80,14 +80,21 @@ export const CIDProvider = ({ children }) => {
   // Cleared when the app locks or the user logs out.
   const masterKeyRef = useRef(null);
 
-  // ── Init: load fail count ────────────────────────────────────────
+  // ── Init: load fail count + cached push token ───────────────────────
   useEffect(() => {
     getFailCount().then(setFailCount).catch(console.error);
     
-    // Load persisted avatar
+    // Load persisted avatar + push token so the first registerUser() call
+    // includes the push token and avoids the race condition.
     import('@react-native-async-storage/async-storage').then(({ default: AsyncStorage }) => {
-      AsyncStorage.getItem('losky_avatar').then(val => {
-        if (val) setUserAvatarState(val);
+      AsyncStorage.multiGet(['losky_avatar', 'losky_push_token']).then((results) => {
+        results.forEach(([key, val]) => {
+          if (key === 'losky_avatar' && val) setUserAvatarState(val);
+          if (key === 'losky_push_token' && val) {
+            console.log('[CIDContext] Pre-loaded push token from storage.');
+            setPushToken(val);
+          }
+        });
       });
     });
   }, []);

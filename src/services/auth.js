@@ -1,4 +1,6 @@
+import axios from 'axios';
 import api from './api';
+import AppConfig from '../../config/appConfig';
 import { getDeviceId } from '../utils/device';
 import * as SecureStore from 'expo-secure-store';
 
@@ -10,8 +12,14 @@ export const getAppConfig = async () => {
     const response = await api.get('app/config');
     return response.data;
   } catch (error) {
-    console.error('[AuthService] Error fetching app config:', error);
-    throw error;
+    const fallbackUrl = `${AppConfig.API.BASE_URL.replace(/\/$/, '')}/app/config`;
+    try {
+      const fallbackResponse = await axios.get(fallbackUrl, { timeout: 10000 });
+      return fallbackResponse.data;
+    } catch (fallbackError) {
+      console.error('[AuthService] Error fetching app config:', fallbackError);
+      throw error;
+    }
   }
 };
 

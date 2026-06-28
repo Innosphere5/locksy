@@ -1,37 +1,75 @@
-// appConfig.js — MULTI-DOMAIN PRODUCTION VERSION
+// appConfig.js — LOCAL/PRODUCTION CONFIG
+import Constants from 'expo-constants';
 
-const SERVER_IP = "192.168.31.172"; // your PC IP
-const SOCKET_PORT = 5050;
-const API_PORT = 3000;
-const MEDIA_PORT = 5050;
+const getEnvValue = (key, fallback) => {
+  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    return process.env[key];
+  }
+  return fallback;
+};
 
-const DEV = __DEV__; // Automatically true in local dev, false in release builds
-const SERVER_DOMAIN = "locksy-server.onrender.com"; // Render Backend (Sockets, Media)
-const ADMIN_DOMAIN = "locksy.info";                 // Vercel Frontend (Auth, API)
+const getExpoExtraValue = (key, fallback) => {
+  const extra = Constants.expoConfig?.extra || Constants.manifest?.extra || {};
+  return extra[key] || fallback;
+};
+
+const normalizeOrigin = (value, fallback) => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) return fallback;
+  return trimmed.replace(/\/+$/, '');
+};
+
+const normalizeApiBaseUrl = (value, fallback) => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  const base = trimmed || fallback;
+  const withoutTrailingSlash = base.replace(/\/+$/, '');
+
+  if (!withoutTrailingSlash) {
+    return fallback;
+  }
+
+  if (/\/api(?:\/|$)/i.test(withoutTrailingSlash)) {
+    return `${withoutTrailingSlash}/`;
+  }
+
+  return `${withoutTrailingSlash}/api/`;
+};
+
+const SERVER_IP = getEnvValue('EXPO_PUBLIC_SERVER_IP', '192.168.31.159');
+const SOCKET_PORT = getEnvValue('EXPO_PUBLIC_SOCKET_PORT', '5050');
+const API_PORT = getEnvValue('EXPO_PUBLIC_API_PORT', '5050');
+const MEDIA_PORT = getEnvValue('EXPO_PUBLIC_MEDIA_PORT', '5050');
+
+const DEV = __DEV__;
+const SERVER_DOMAIN = getEnvValue('EXPO_PUBLIC_SERVER_DOMAIN', 'locksy-server.onrender.com');
+const ADMIN_DOMAIN = getEnvValue('EXPO_PUBLIC_ADMIN_DOMAIN', 'locksy.info');
+const API_BASE_URL = normalizeApiBaseUrl(
+  getEnvValue('EXPO_PUBLIC_API_BASE_URL', DEV ? '' : getExpoExtraValue('apiUrl', '')),
+  DEV ? `http://${SERVER_IP}:${API_PORT}` : `https://${ADMIN_DOMAIN}`
+);
+const SOCKET_BASE_URL = normalizeOrigin(
+  getEnvValue('EXPO_PUBLIC_SOCKET_BASE_URL', DEV ? '' : getExpoExtraValue('socketUrl', '')),
+  DEV ? `http://${SERVER_IP}:${SOCKET_PORT}` : `https://${SERVER_DOMAIN}`
+);
+const MEDIA_BASE_URL = normalizeOrigin(
+  getEnvValue('EXPO_PUBLIC_MEDIA_BASE_URL', DEV ? '' : getExpoExtraValue('mediaUrl', '')),
+  DEV ? `http://${SERVER_IP}:${MEDIA_PORT}` : `https://${SERVER_DOMAIN}`
+);
 
 const AppConfig = {
-  // ── Socket Server (Render) ─────────────────────
   SOCKET: {
-    URL: DEV ? `http://${SERVER_IP}:${SOCKET_PORT}` : `https://${SERVER_DOMAIN}`,
-    PATH: "/socket.io/",
+    URL: SOCKET_BASE_URL,
+    PATH: '/socket.io/',
   },
-
-  // ── API Backend (Vercel) ───────────────────────
   API: {
-    BASE_URL: DEV ? `http://${SERVER_IP}:${API_PORT}/api/` : `https://${ADMIN_DOMAIN}/api/`,
+    BASE_URL: API_BASE_URL,
   },
-
-  // ── Media Server (Render) ──────────────────────
   MEDIA: {
-    BASE_URL: DEV ? `http://${SERVER_IP}:${MEDIA_PORT}` : `https://${SERVER_DOMAIN}`,
+    BASE_URL: MEDIA_BASE_URL,
   },
-
-  // ── Debug ─────────────────────────────────────
   DEBUG: {
     VERBOSE_LOGGING: DEV,
   },
-
-  // ── Security ──────────────────────────────────
   SECURITY: {
     MAX_PASSWORD_ATTEMPTS: 3,
   },

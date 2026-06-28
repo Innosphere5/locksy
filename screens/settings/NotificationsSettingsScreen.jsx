@@ -184,7 +184,7 @@ export default function NotificationsSettingsScreen({ navigation }) {
             </View>
             <Switch
               value={soundEnabled}
-              onValueChange={setSoundEnabled}
+              onValueChange={(val) => updateSetting('losky_sound', val, setSoundEnabled)}
               trackColor={{ false: COLORS.gray200, true: COLORS.warning + '40' }}
               thumbColor={soundEnabled ? COLORS.warning : COLORS.gray300}
             />
@@ -200,7 +200,7 @@ export default function NotificationsSettingsScreen({ navigation }) {
             </View>
             <Switch
               value={vibrationEnabled}
-              onValueChange={setVibrationEnabled}
+              onValueChange={(val) => updateSetting('losky_vibrate', val, setVibrationEnabled)}
               trackColor={{ false: COLORS.gray200, true: COLORS.primary + '40' }}
               thumbColor={vibrationEnabled ? COLORS.primary : COLORS.gray300}
             />

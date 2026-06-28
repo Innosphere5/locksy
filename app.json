@@ -84,7 +84,7 @@
       "eas": {
         "projectId": "282914b8-abf8-44a2-aeba-a20b7dde36a7"
       },
-      "apiUrl": "https://locksy-server.onrender.com"
+      "apiUrl": "https://locksy.info"
     },
     "runtimeVersion": {
       "policy": "sdkVersion"

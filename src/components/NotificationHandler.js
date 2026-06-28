@@ -10,7 +10,7 @@ import signalingService from '../services/signalingService';
 import socketService from '../../utils/socketService';
 
 const NotificationHandler = () => {
-  const { setPushToken, cid } = useCIDContext();
+  const { setPushToken, cid, contacts } = useCIDContext();
   const callStatus = useCallStore(state => state.callStatus);
 
   useEffect(() => {
@@ -43,6 +43,30 @@ const NotificationHandler = () => {
     // Navigate to incoming call screen
     if (navigationRef.isReady()) {
       navigationRef.navigate('IncomingCall');
+    }
+  };
+
+  /**
+   * FIX #3: Navigate to the correct chat screen when a message notification is tapped.
+   * Uses roomId for 1-on-1 chats and groupId for group chats.
+   */
+  const _handleMessageNotificationTap = (data) => {
+    if (!navigationRef.isReady()) {
+      console.warn('[NotificationHandler] Navigator not ready for message tap navigation');
+      return;
+    }
+
+    const { roomId, groupId, senderCid } = data;
+
+    if (groupId) {
+      console.log('[NotificationHandler] Tapped group message notification, navigating to GroupChat:', groupId);
+      navigationRef.navigate('GroupChat', { groupId });
+    } else if (roomId) {
+      console.log('[NotificationHandler] Tapped message notification, navigating to ChatMessage:', roomId);
+      navigationRef.navigate('ChatMessage', { roomId, senderCid });
+    } else {
+      // Fallback: go to Chats list
+      navigationRef.navigate('Chats');
     }
   };
 
@@ -128,8 +152,17 @@ const NotificationHandler = () => {
       (response) => {
         console.log("[NotificationHandler] Notification Tapped:", response);
         const data = response.notification.request.content.data;
+
+        // Handle call notification taps
         if (data.type === 'call_offer' || data.type === 'call') {
           _handleIncomingCallOffer(data);
+          return;
+        }
+
+        // FIX #3: Handle message notification taps — navigate to correct chat screen
+        if (data.type === 'message') {
+          _handleMessageNotificationTap(data);
+          return;
         }
       }
     );

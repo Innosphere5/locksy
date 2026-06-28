@@ -29,7 +29,13 @@ Notifications.setNotificationHandler({
 
     try {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      const silent = await AsyncStorage.getItem('losky_silent_notif');
+      const [silent, soundEnabled, vibrateEnabled] = await Promise.all([
+        AsyncStorage.getItem('losky_silent_notif'),
+        AsyncStorage.getItem('losky_sound'),
+        AsyncStorage.getItem('losky_vibrate'),
+      ]);
+
+      // Silent mode: show alert (so user knows something came in) but no sound
       if (silent === 'true') {
         return {
           shouldShowAlert: true,
@@ -37,8 +43,18 @@ Notifications.setNotificationHandler({
           shouldSetBadge: true,
         };
       }
+
+      // Respect individual sound / vibration settings
+      // null means the user hasn't changed it yet — default to enabled (true)
+      const playSound = soundEnabled !== 'false';
+
+      return {
+        shouldShowAlert: true,
+        shouldPlaySound: playSound,
+        shouldSetBadge: true,
+      };
     } catch (e) {
-      console.warn('[NotificationService] Failed to read silent setting', e);
+      console.warn('[NotificationService] Failed to read notification settings', e);
     }
 
     return {
@@ -50,8 +66,11 @@ Notifications.setNotificationHandler({
 });
 
 /**
- * Register the device for push notifications and return the FCM token.
- * This is production-ready logic with error handling and platform checks.
+ * Register the device for push notifications and return the Expo Push Token.
+ *
+ * FIX: Also persists the token to AsyncStorage ('losky_push_token') so that
+ * CIDContext can pre-load it on the NEXT app start — breaking the race condition
+ * where socketService.registerUser() fires before the token is available.
  */
 export async function registerForPushNotificationsAsync() {
   let token;
@@ -85,22 +104,20 @@ export async function registerForPushNotificationsAsync() {
       Constants?.easConfig?.projectId;
 
     try {
-      // For production FCM, we fetch the device push token
-      // Note: getDevicePushTokenAsync() returns the native token (FCM for Android, APNs for iOS)
       const deviceToken = await Notifications.getDevicePushTokenAsync();
       token = deviceToken.data;
-      console.log('Native Device Token (FCM):', token);
-    } catch (e) {
-      console.error('Error fetching FCM token:', e);
+      console.log('FCM Device Push Token:', token);
 
-      // Fallback to Expo Push Token if native token fails (useful for debugging)
+      // ── Persist token so CIDContext can pre-load it on next start ─────────
       try {
-        const expoToken = await Notifications.getExpoPushTokenAsync({ projectId });
-        token = expoToken.data;
-        console.log('Fallback Expo Push Token:', token);
-      } catch (err) {
-        console.error('Critical failure in token generation:', err);
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        await AsyncStorage.setItem('losky_push_token', token);
+        console.log('[NotificationService] Push token persisted to AsyncStorage.');
+      } catch (storageErr) {
+        console.warn('[NotificationService] Failed to persist push token:', storageErr);
       }
+    } catch (e) {
+      console.error('Critical failure in token generation:', e);
     }
   } else {
     console.warn('Must use physical device for Push Notifications');
