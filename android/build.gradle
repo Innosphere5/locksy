@@ -23,28 +23,3 @@ allprojects {
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
-
-
-// Fix: AGP 8.x buildTypes injection
-// AGP 8.x requires every com.android.library subproject to declare at least
-// one build variant. Older RN libraries (webrtc, incall-manager, screens, etc.)
-// omit buildTypes entirely, causing "No variants exist" resolution failures.
-// This block safely injects the missing buildTypes after each subproject is evaluated.
-gradle.afterProject { project ->
-    if (project.plugins.hasPlugin("com.android.library")) {
-        if (!project.android.buildTypes.findByName("release")) {
-            project.android.buildTypes {
-                release {
-                    minifyEnabled false
-                }
-            }
-        }
-        if (!project.android.buildTypes.findByName("debug")) {
-            project.android.buildTypes {
-                debug {
-                    minifyEnabled false
-                }
-            }
-        }
-    }
-}
