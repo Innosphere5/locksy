@@ -21,5 +21,32 @@ allprojects {
   }
 }
 
+// Fix for AGP 8.x "No variants exist" error in older React Native libraries.
+// Many community packages (webrtc, incall-manager, get-random-values, etc.) don't declare
+// buildTypes in their android/build.gradle. AGP 8.x requires at least one variant to be
+// published, so we inject the missing buildTypes into every android library subproject.
+subprojects {
+    afterEvaluate { project ->
+        if (project.plugins.hasPlugin("com.android.library")) {
+            android {
+                if (!buildTypes.findByName("release")) {
+                    buildTypes {
+                        release {
+                            minifyEnabled false
+                        }
+                    }
+                }
+                if (!buildTypes.findByName("debug")) {
+                    buildTypes {
+                        debug {
+                            minifyEnabled false
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
