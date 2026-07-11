@@ -24,7 +24,8 @@
         "NSMicrophoneUsageDescription": "Allow Locksy to access your microphone for audio and video calls.",
         "NSPhotoLibraryUsageDescription": "Allow Locksy to access your photos.",
         "NSUserTrackingUsageDescription": "This app uses notifications and connectivity features."
-      }
+      },
+      "bitcode": false
     },
     "android": {
       "package": "com.innosphere.locksy",
@@ -36,20 +37,25 @@
       "edgeToEdgeEnabled": true,
       "googleServicesFile": "./google-services.json",
       "permissions": [
-        "CAMERA",
-        "RECORD_AUDIO",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "POST_NOTIFICATIONS",
-        "INTERNET",
-        "VIBRATE",
-        "WAKE_LOCK"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.INTERNET",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.BLUETOOTH"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withAndroidBuildTypeFix",
       "expo-secure-store",
       [
         "expo-notifications",
@@ -82,7 +88,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "282914b8-abf8-44a2-aeba-a20b7dde36a7"
+        "projectId": "e5b4276c-45bb-4075-a496-a24c1ee4509f"
       },
       "apiUrl": "https://locksy.info"
     },
@@ -91,6 +97,7 @@
     },
     "updates": {
       "fallbackToCacheTimeout": 0
-    }
+    },
+    "owner": "kevinburger"
   }
 }
