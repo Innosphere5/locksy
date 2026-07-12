@@ -4,11 +4,11 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Animated,
   Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../theme';
 import useCallStore from '../../src/store/useCallStore';
@@ -31,18 +31,23 @@ export default function VoiceCallScreen({ navigation }) {
   } = useCallStore();
   
   const [duration, setDuration] = useState(0);
+  const [isCallEnded, setIsCallEnded] = useState(false);
 
   useEffect(() => {
-    // Only navigate away if the call was active and then ended or failed.
-    // We ignore 'idle' on mount to allow the call to start.
     if (callStatus === 'ended' || callStatus === 'failed') {
+      setIsCallEnded(true);
+    }
+  }, [callStatus]);
+
+  useEffect(() => {
+    if (isCallEnded) {
       const timeout = setTimeout(() => {
         navigation.navigate('Chats');
         resetCall();
-      }, 2000); // Small delay to show "Call Ended" status if we add it
+      }, 1500);
       return () => clearTimeout(timeout);
     }
-  }, [callStatus]);
+  }, [isCallEnded, navigation, resetCall]);
 
   // Timer effect
   useEffect(() => {
@@ -63,7 +68,8 @@ export default function VoiceCallScreen({ navigation }) {
 
   const handleEndCall = async () => {
     await signalingService.endCall();
-    navigation.navigate('Chats');
+    // Navigation and resetCall() are handled by the isCallEnded effect
+    // after callStatus transitions to 'ended' — do not navigate here directly
   };
 
   const toggleMuteLocal = () => {
@@ -112,12 +118,12 @@ export default function VoiceCallScreen({ navigation }) {
         </View>
         <Text style={styles.callerName}>{call.name}</Text>
         <Text style={styles.callDuration}>
-          {callStatus === 'ended' ? 
+          {(callStatus === 'ended' || isCallEnded) ? 
             (endReason === 'busy' ? 'User is Busy' : 
-             endReason === 'no_answer' ? 'No Answer' : 
+             endReason === 'no_answer' ? 'Not Answering' : 
              endReason === 'rejected' ? 'Call Declined' : 'Call Ended') 
             : (callStatus === 'connected' ? formatDuration(duration) : 
-               callStatus === 'ringing' ? 'Ringing...' : 
+               callStatus === 'ringing' || callStatus === 'ringing_remote' ? 'Ringing...' : 
                callStatus === 'connecting' ? 'Connecting...' : 
                'Calling...')}
         </Text>

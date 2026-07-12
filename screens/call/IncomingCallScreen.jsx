@@ -1,14 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Animated,
   Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SPACING, RADIUS } from '../../theme';
 import useCallStore from '../../src/store/useCallStore';
@@ -20,8 +20,17 @@ export default function IncomingCallScreen({ navigation, route }) {
   const { remoteUser, callType, callId, resetCall, callStatus } = useCallStore();
   const [pulseAnimation] = useState(new Animated.Value(0));
   const [isProcessing, setIsProcessing] = useState(false);
+  // Guard: don't react to 'idle' on initial mount — only after the screen is settled
+  const hasMountedRef = useRef(false);
 
   useEffect(() => {
+    // Mark as mounted after first render so we don't misfire on initial idle status
+    const t = setTimeout(() => { hasMountedRef.current = true; }, 300);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!hasMountedRef.current) return;
     // If call ended or failed while on this screen, go back
     if (callStatus === 'ended' || callStatus === 'failed' || callStatus === 'idle') {
       navigation.goBack();

@@ -4,10 +4,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SPACING } from '../../theme';
 import { RTCView } from 'react-native-webrtc';
@@ -30,6 +30,7 @@ export default function VideoCallScreen({ navigation }) {
     toggleVideo,
     startTime, 
     callStatus,
+    resetCall,
     endReason
   } = useCallStore();
   
@@ -42,20 +43,28 @@ export default function VideoCallScreen({ navigation }) {
       // Cleanup when unmounting
       const currentStatus = useCallStore.getState().callStatus;
       if (currentStatus !== 'idle' && currentStatus !== 'ended' && currentStatus !== 'failed') {
-        console.log('[VideoCallScreen] Unmounting while call active, ending call');
         signalingService.endCall();
       }
     };
   }, []);
 
+  const [isCallEnded, setIsCallEnded] = useState(false);
+
   useEffect(() => {
     if (callStatus === 'ended' || callStatus === 'failed') {
-      const timeout = setTimeout(() => {
-        navigation.navigate('Chats');
-      }, 2000);
-      return () => clearTimeout(timeout);
+      setIsCallEnded(true);
     }
   }, [callStatus]);
+
+  useEffect(() => {
+    if (isCallEnded) {
+      const timeout = setTimeout(() => {
+        navigation.navigate('Chats');
+        resetCall();
+      }, 1500);
+      return () => clearTimeout(timeout);
+    }
+  }, [isCallEnded, navigation, resetCall]);
 
   // Timer effect
   useEffect(() => {
@@ -100,7 +109,8 @@ export default function VideoCallScreen({ navigation }) {
 
   const handleEndCall = async () => {
     await signalingService.endCall();
-    navigation.navigate('Chats');
+    // Navigation and resetCall() are handled by the isCallEnded effect
+    // after callStatus transitions to 'ended' — do not navigate here directly
   };
 
   const toggleMuteLocal = () => {
@@ -146,13 +156,13 @@ export default function VideoCallScreen({ navigation }) {
           <View style={styles.videoPlaceholder}>
             <View style={styles.placeholderAvatar}>
               <Text style={styles.placeholderAvatarEmoji}>
-                {callStatus === 'ended' ? '📵' : (isVideoEnabled ? call.avatar : '🎥')}
+                {(callStatus === 'ended' || isCallEnded) ? '📵' : (isVideoEnabled ? call.avatar : '🎥')}
               </Text>
             </View>
             <Text style={styles.cameraOffText}>
-              {callStatus === 'ended' ? 
+              {(callStatus === 'ended' || isCallEnded) ? 
                 (endReason === 'busy' ? 'User is busy' : 
-                 endReason === 'no_answer' ? 'No Answer' : 
+                 endReason === 'no_answer' ? 'Not Answering' : 
                  endReason === 'rejected' ? 'Call Declined' : 'Call Ended') 
                 : (isVideoEnabled ? 'Connecting...' : 'Camera is off')}
             </Text>
@@ -266,7 +276,7 @@ export default function VideoCallScreen({ navigation }) {
           <View style={styles.durationBadge}>
             <Text style={styles.durationText}>
               {callStatus === 'connected' ? formatDuration(duration) : 
-               callStatus === 'ringing' ? 'Ringing...' : 
+               (callStatus === 'ringing' || callStatus === 'ringing_remote') ? 'Ringing...' : 
                callStatus === 'connecting' ? 'Connecting...' : 
                'Calling...'}
             </Text>

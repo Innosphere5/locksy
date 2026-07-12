@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   Platform,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS, SPACING, RADIUS } from "./theme";
 
 const { width, height } = Dimensions.get("window");
@@ -71,9 +72,10 @@ const SLIDES = [
   },
 ];
 
-function Slide({ item, onNext, navigation }) {
+function Slide({ item, onNext, navigation, insets }) {
+  const bottomPadding = Math.max((insets?.bottom || 0) + 10, SPACING.xl);
   return (
-    <View style={[styles.slide, { width }]}>
+    <View style={[styles.slide, { width, paddingBottom: bottomPadding }]}>
       {/* Icon */}
       <View style={styles.iconArea}>
         {item.id === "1" && (
@@ -141,7 +143,7 @@ function Slide({ item, onNext, navigation }) {
         style={styles.ctaBtn}
         onPress={() => {
           if (item.isFinal) {
-            navigation.navigate("CIDGeneration");
+            navigation.replace("CIDGeneration");
           } else {
             onNext();
           }
@@ -152,7 +154,7 @@ function Slide({ item, onNext, navigation }) {
       </TouchableOpacity>
 
       {!item.isFinal && (
-        <TouchableOpacity onPress={() => navigation.navigate("CIDGeneration")}>
+        <TouchableOpacity onPress={() => navigation.replace("CIDGeneration")}>
           <Text style={styles.skipText}>Skip tutorial</Text>
         </TouchableOpacity>
       )}
@@ -162,6 +164,7 @@ function Slide({ item, onNext, navigation }) {
 
 export default function OnboardingScreen({ navigation }) {
   const flatListRef = useRef(null);
+  const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollX = useRef(new Animated.Value(0)).current;
 
@@ -198,7 +201,7 @@ export default function OnboardingScreen({ navigation }) {
           { useNativeDriver: false },
         )}
         renderItem={({ item }) => (
-          <Slide item={item} onNext={goNext} navigation={navigation} />
+          <Slide item={item} onNext={goNext} navigation={navigation} insets={insets} />
         )}
       />
     </View>
@@ -237,7 +240,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: SPACING.xl,
     paddingTop: Platform.OS === "ios" ? 110 : 90,
-    paddingBottom: SPACING.xl,
+    // paddingBottom is now applied dynamically inline
   },
   iconArea: {
     marginBottom: SPACING.xl,

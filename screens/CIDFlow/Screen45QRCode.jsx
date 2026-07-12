@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Share,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
@@ -84,22 +85,28 @@ const Screen45QRCode = ({ onNext, onBack }) => {
 
           {/* Real SVG-based QR Code */}
           <View style={CIDFlowStyles.qrWrapper}>
-            <View style={[CIDFlowStyles.qrInner, { padding: 15, backgroundColor: COLORS.white }]}>
-              <QRCode
-                value={userCID || 'ERROR'}
-                size={200}
-                color={COLORS.dark}
-                backgroundColor={COLORS.white}
-                quietZone={10}
-                getRef={(ref) => (qrRef.current = ref)}
-              />
-              
-              {/* Lock Badge overlay managed by CIDFlowStyles */}
-              <View style={[CIDFlowStyles.qrOverlay, { position: 'absolute', top: '50%', left: '50%', marginLeft: -15, marginTop: -15 }]}>
-                <View style={[CIDFlowStyles.qrLockBadge, { width: 30, height: 30, borderRadius: 15, backgroundColor: COLORS.white, elevation: 3 }]}>
-                  <Text style={{ fontSize: 16 }}>🔒</Text>
-                </View>
-              </View>
+            <View style={[CIDFlowStyles.qrInner, { padding: 15, backgroundColor: COLORS.white, justifyContent: 'center', alignItems: 'center', minHeight: 230 }]}>
+              {userCID ? (
+                <>
+                  <QRCode
+                    value={userCID}
+                    size={200}
+                    color={COLORS.dark}
+                    backgroundColor={COLORS.white}
+                    quietZone={10}
+                    getRef={(ref) => (qrRef.current = ref)}
+                  />
+                  
+                  {/* Lock Badge overlay managed by CIDFlowStyles */}
+                  <View style={[CIDFlowStyles.qrOverlay, { position: 'absolute', top: '50%', left: '50%', marginLeft: -15, marginTop: -15 }]}>
+                    <View style={[CIDFlowStyles.qrLockBadge, { width: 30, height: 30, borderRadius: 15, backgroundColor: COLORS.white, elevation: 3 }]}>
+                      <Text style={{ fontSize: 16 }}>🔒</Text>
+                    </View>
+                  </View>
+                </>
+              ) : (
+                <ActivityIndicator size="large" color={COLORS.primary} />
+              )}
             </View>
           </View>
 

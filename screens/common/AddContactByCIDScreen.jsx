@@ -237,20 +237,25 @@ export default function AddContactByCIDScreen({ navigation, route }) {
 
       {showMyQR && (
         <View style={styles.qrContainer}>
-          <View style={[styles.qrInner, { padding: 15, backgroundColor: COLORS.white, borderRadius: RADIUS.md }]}>
-            <QRCode
-              value={userCID || 'ERROR'}
-              size={150}
-              color={COLORS.text}
-              backgroundColor={COLORS.white}
-              quietZone={10}
-              getRef={(ref) => (qrRef.current = ref)}
-            />
+          <View style={[styles.qrInner, { padding: 15, backgroundColor: COLORS.white, borderRadius: RADIUS.md, justifyContent: 'center', alignItems: 'center', minHeight: 180 }]}>
+            {userCID ? (
+              <QRCode
+                value={userCID}
+                size={150}
+                color={COLORS.text}
+                backgroundColor={COLORS.white}
+                quietZone={10}
+                getRef={(ref) => (qrRef.current = ref)}
+              />
+            ) : (
+              <ActivityIndicator size="large" color={COLORS.primary} />
+            )}
           </View>
           <TouchableOpacity 
              style={styles.shareQRButton}
              onPress={handleShareQR}
              activeOpacity={0.8}
+             disabled={!userCID}
           >
              <MaterialCommunityIcons name="share-variant" size={20} color={COLORS.primary} />
              <Text style={styles.shareQRText}>Share QR Code</Text>

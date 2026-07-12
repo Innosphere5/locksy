@@ -56,18 +56,30 @@ class SignalingService {
       
       // Cache the offer SDP for when we accept
       this.pendingOffer = offerSDP;
+
+      // Setup incoming call safety timeout (28 seconds) to auto-reject if unanswered
+      if (this.callTimeout) clearTimeout(this.callTimeout);
+      this.callTimeout = setTimeout(() => {
+        console.log('[SignalingService] Incoming call unanswered, auto-rejecting');
+        this.rejectCall();
+      }, 28000);
     });
 
     socketService.on('call:ringing', (data) => {
       console.log('[SignalingService] Remote is ringing');
       if (useCallStore.getState().callStatus === 'calling') {
-        useCallStore.getState().setCallStatus('ringing');
+        useCallStore.getState().setCallStatus('ringing_remote');
       }
     });
 
     socketService.on('call:answer', async (data) => {
       const { callId, answerSDP } = data;
       console.log('[SignalingService] Received Answer');
+      // Clear caller's call timeout because the call has been answered!
+      if (this.callTimeout) {
+        clearTimeout(this.callTimeout);
+        this.callTimeout = null;
+      }
       await rtcService.setRemoteAnswer(answerSDP);
       useCallStore.getState().setCallStatus('connecting');
     });
@@ -78,29 +90,28 @@ class SignalingService {
     });
 
     socketService.on('call:rejected', (data) => {
-      console.log('[SignalingService] Call Rejected');
       InCallManager.stopRingtone();
       this.cleanup();
       const state = useCallStore.getState();
+      state.setEndReason(data.reason || 'rejected');
       state.setCallStatus('ended');
-      state.setEndReason('rejected');
-      setTimeout(() => state.resetCall(), 2000);
+      // UI screens (VoiceCallScreen/VideoCallScreen) handle the resetCall() via
+      // their isCallEnded effect — do NOT call it here to avoid double-reset
     });
 
     socketService.on('call:ended', (data) => {
-      console.log('[SignalingService] Call Ended by Remote');
       InCallManager.stopRingtone();
       this.cleanup();
       useCallStore.getState().setCallStatus('ended');
-      setTimeout(() => useCallStore.getState().resetCall(), 2000);
+      // UI screens handle resetCall() via isCallEnded effect
     });
 
     socketService.on('call:busy', (data) => {
-      console.log('[SignalingService] Target is busy');
       this.cleanup();
-      useCallStore.getState().setCallStatus('ended');
-      useCallStore.getState().setEndReason('busy');
-      setTimeout(() => useCallStore.getState().resetCall(), 3000);
+      const state = useCallStore.getState();
+      state.setEndReason('busy');
+      state.setCallStatus('ended');
+      // UI screens handle resetCall() via isCallEnded effect
     });
   }
 
@@ -137,12 +148,12 @@ class SignalingService {
 
       InCallManager.start({ media: callType, ringback: true });
       
-      // 4. Setup Auto-Timeout (45 seconds)
+      // 4. Setup Auto-Timeout (25 seconds)
       if (this.callTimeout) clearTimeout(this.callTimeout);
       this.callTimeout = setTimeout(() => {
         console.log('[SignalingService] No answer timeout reached');
         this.endCall('no_answer');
-      }, 45000);
+      }, 25000);
 
       return callId;
     } catch (error) {
@@ -228,8 +239,8 @@ class SignalingService {
     }
 
     if (callId && remoteUser) {
-      if (callStatus === 'ringing' || callStatus === 'calling') {
-        socketService.emitCallReject(callId, remoteUser.id, 'cancelled');
+      if (callStatus === 'ringing' || callStatus === 'calling' || callStatus === 'ringing_remote') {
+        socketService.emitCallReject(callId, remoteUser.id, reason === 'no_answer' ? 'no_answer' : 'cancelled');
       } else {
         socketService.emitCallEnd(callId, remoteUser.id, reason);
       }

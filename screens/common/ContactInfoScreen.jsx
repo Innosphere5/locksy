@@ -128,6 +128,9 @@ export default function ContactInfoScreen({ navigation, route }) {
     const pruned = await messageStorage.saveChatTimer(contact.roomId, ms);
     setTimer(ms);
 
+    // Sync timer update to the server/other participant
+    socketService.updateChatTimer(contact.roomId, ms);
+
     // Sync prunes to server
     if (pruned && pruned.length > 0) {
       console.log(`[ContactInfo] Syncing ${pruned.length} retroactive prunes to server...`);

@@ -9,8 +9,7 @@ import { SecurityProvider } from "./context/SecurityContext";
 
 import { navigationRef } from "./src/utils/navigation";
 import * as NotificationService from "./services/notificationService";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { Platform, StyleSheet } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 // ── New Secure Flow ──────────────────────────────────────────────────────────
 import SplashScreen from "./src/screens/SplashScreen";
@@ -99,7 +98,6 @@ export default function App() {
         <GroupsProvider>
           <CallsProvider>
             <SafeAreaProvider>
-              <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }} edges={Platform.OS === 'android' ? ['top', 'bottom', 'left', 'right'] : []}>
               <NavigationContainer ref={navigationRef}>
               <NotificationHandler />
               <StatusBar style="dark" />
@@ -380,7 +378,6 @@ export default function App() {
               </Stack.Navigator>
               <GroupInviteModal />
               </NavigationContainer>
-              </SafeAreaView>
             </SafeAreaProvider>
           </CallsProvider>
         </GroupsProvider>

@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Linking, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const BlockedScreen = ({ route }) => {
   const { reason } = route.params || {};
@@ -52,6 +53,7 @@ const BlockedScreen = ({ route }) => {
       colors={['#450a0a', '#0f172a']}
       style={styles.container}
     >
+      <SafeAreaView style={styles.safeArea}>
       <View style={styles.iconContainer}>
         <View style={styles.lockIcon}>
           <Text style={styles.lockText}>🔒</Text>
@@ -66,12 +68,16 @@ const BlockedScreen = ({ route }) => {
       </TouchableOpacity>
 
       <Text style={styles.footer}>Security Protocol LKSY-99</Text>
+      </SafeAreaView>
     </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  safeArea: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',

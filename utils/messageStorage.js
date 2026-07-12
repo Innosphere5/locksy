@@ -20,53 +20,74 @@ class MessageStorage {
    * @param {object} message 
    */
   async saveMessage(roomId, message) {
+    // Hoist stripped message to outer scope so the recovery catch can retry with
+    // the already-sanitised object instead of the original bloated payload.
+    let messageToSave = null;
+
     try {
       if (!roomId) return;
-      
+
       const key = `${MSG_PREFIX}${roomId}`;
       const existingStr = await AsyncStorage.getItem(key);
       const messages = existingStr ? JSON.parse(existingStr) : [];
-      
+
       // Prevent duplicates by ID
       if (messages.some(m => m.id === message.id)) {
         return;
       }
-      
-      if (!message.createdAt) {
-        message.createdAt = Date.now();
+
+      // Clone message to avoid modifying in-memory objects used by UI/sockets
+      messageToSave = {
+        ...message,
+        message: (message.message && typeof message.message === 'object')
+          ? { ...message.message }
+          : message.message
+      };
+
+      // Strip large senderAvatar to keep the DB row within Android's CursorWindow
+      // 2 MB limit. The UI falls back to contactAvatar / userAvatar when this is null.
+      if (messageToSave.senderAvatar) {
+        messageToSave.senderAvatar = null;
+      }
+
+      if (!messageToSave.createdAt) {
+        messageToSave.createdAt = Date.now();
       }
 
       // AUTO-DELETE LOGIC: Check for chat timer
       const timerMs = await this.getChatTimer(roomId);
       if (timerMs && timerMs > 0) {
-        message.expireAt = message.createdAt + timerMs;
-        console.log(`[MessageStorage] Auto-delete set for ${message.id}: expires in ${timerMs}ms`);
+        messageToSave.expireAt = messageToSave.createdAt + timerMs;
       }
 
-      // LEAN STORAGE: Strip local URIs from media messages to keep DB tiny.
-      // We will re-derive them from mediaId on load.
-      if (message.message && typeof message.message === 'object') {
-        const msg = message.message;
+      // LEAN STORAGE: Strip local URIs and base64 payloads from media messages.
+      // These are re-derived from mediaId (S3 key) on load via downloadAndDecryptFile.
+      if (messageToSave.message && typeof messageToSave.message === 'object') {
+        const msg = messageToSave.message;
         if (msg.uri) msg.uri = null;
         if (msg.image) msg.image = null;
+        if (msg.base64) msg.base64 = null;
       }
-      
-      messages.push(message);
-      
-      // REDUCED LIMIT: Keep only last 100 messages locally to avoid SQLITE_FULL
+
+      messages.push(messageToSave);
+
+      // Keep only last 100 messages locally to prevent SQLITE_FULL / Row too big
       const limitedMessages = messages.slice(-100);
-      
+
       await AsyncStorage.setItem(key, JSON.stringify(limitedMessages));
-      
-      // Update chat list summary
-      await this._updateChatListSummary(roomId, message, message.groupId);
-      
-      console.log(`[MessageStorage] Saved to ${roomId} (Limit: 100)`);
+
+      // Update chat list summary using the lean, saved message format
+      await this._updateChatListSummary(roomId, messageToSave, messageToSave.groupId);
     } catch (error) {
-      if (error.message && (error.message.includes('database or disk is full') || error.message.includes('SQLITE_FULL') || error.message.includes('Row too big'))) {
-        console.warn(`[MessageStorage] ${error.message.includes('Row too big') ? 'Row too big' : 'Disk full'}! Attempting partial prune to recover...`);
-        
-        // RECOVERY: Prune 50% of the oldest messages in this specific room
+      const isSizeError = error.message && (
+        error.message.includes('database or disk is full') ||
+        error.message.includes('SQLITE_FULL') ||
+        error.message.includes('Row too big')
+      );
+
+      if (isSizeError) {
+        // RECOVERY: Prune 50% of the oldest messages and retry with the
+        // already-stripped messageToSave (not the original bloated payload).
         try {
           const key = `${MSG_PREFIX}${roomId}`;
           const current = await AsyncStorage.getItem(key);
@@ -74,10 +95,11 @@ class MessageStorage {
             const msgs = JSON.parse(current);
             const halved = msgs.slice(Math.floor(msgs.length / 2));
             await AsyncStorage.setItem(key, JSON.stringify(halved));
-            console.log(`[MessageStorage] Recovered by pruning oldest 50% of messages in ${roomId}. Older history is safe in AWS Cloud.`);
-            
-            // Try saving the new message again
-            return await this.saveMessage(roomId, message);
+
+            // Retry with the lean clone. If messageToSave was never built
+            // (error came from getItem), fall back to a fresh sanitised clone.
+            const retryMsg = messageToSave || message;
+            return await this.saveMessage(roomId, retryMsg);
           }
         } catch (innerError) {
           console.error('[MessageStorage] Recovery failed, wiping room as last resort:', innerError);
@@ -102,24 +124,34 @@ class MessageStorage {
       let messages = JSON.parse(existingStr);
       let updated = false;
 
+      // Sanitise the incoming updates — never allow a bloated senderAvatar
+      // to be written back into an existing row via this path.
+      const safeUpdates = { ...updates };
+      if (safeUpdates.senderAvatar) safeUpdates.senderAvatar = null;
+      if (safeUpdates.message && typeof safeUpdates.message === 'object') {
+        const msg = { ...safeUpdates.message };
+        if (msg.uri) msg.uri = null;
+        if (msg.image) msg.image = null;
+        if (msg.base64) msg.base64 = null;
+        safeUpdates.message = msg;
+      }
+
       messages = messages.map(m => {
         if (m.id === messageId) {
           updated = true;
-          return { ...m, ...updates };
+          return { ...m, ...safeUpdates };
         }
         return m;
       });
 
       if (updated) {
         await AsyncStorage.setItem(key, JSON.stringify(messages));
-        console.log(`[MessageStorage] Updated message ${messageId} in room ${roomId}`);
       }
     } catch (error) {
       console.error('[MessageStorage] Error updating message:', error);
-      
+
       const errorStr = error.toString();
-      if (errorStr.includes("Row too big") || errorStr.includes("SQLITE_FULL")) {
-        console.warn(`[MessageStorage] Row too big error during message update for room ${roomId}. Wiping local history.`);
+      if (errorStr.includes('Row too big') || errorStr.includes('SQLITE_FULL')) {
         const key = `${MSG_PREFIX}${roomId}`;
         await AsyncStorage.removeItem(key);
       }
@@ -445,7 +477,6 @@ class MessageStorage {
       const settings = (await this.getChatSettings(roomId)) || {};
       settings.timer = ms;
       await this.saveChatSettings(roomId, settings);
-      console.log(`[MessageStorage] Timer updated for ${roomId}: ${ms}ms`);
 
       // RETROACTIVE PRUNING: Apply timer to existing messages
       if (ms > 0) {
@@ -463,7 +494,6 @@ class MessageStorage {
           });
           if (updated) {
             await AsyncStorage.setItem(key, JSON.stringify(messages));
-            console.log(`[MessageStorage] Retroactively applied timer to ${messages.length} messages in ${roomId}`);
             // Trigger a prune pass immediately to wipe them
             return await this.pruneExpiredMessages();
           }
@@ -653,7 +683,6 @@ class MessageStorage {
         await AsyncStorage.setItem(CHAT_LIST_KEY, JSON.stringify(chatList));
       }
       
-      console.log(`[MessageStorage] History cleared and list updated for room ${roomId}`);
     } catch (error) {
       console.error('[MessageStorage] Error clearing room messages:', error);
     }
@@ -698,7 +727,6 @@ class MessageStorage {
 
       if (deletedCount > 0) {
         await AsyncStorage.setItem(key, JSON.stringify(messages));
-        console.log(`[MessageStorage] Purged ${deletedCount} media items from room ${roomId}`);
       }
       return deletedCount;
     } catch (error) {
@@ -883,7 +911,6 @@ class MessageStorage {
 
       messages = messages.filter(m => !messageIds.includes(m.id));
       await AsyncStorage.setItem(key, JSON.stringify(messages));
-      console.log(`[MessageStorage] Bulk deleted ${toDelete.length} messages in ${roomId}`);
     } catch (error) {
       console.error('[MessageStorage] Error in bulk deletion:', error);
     }

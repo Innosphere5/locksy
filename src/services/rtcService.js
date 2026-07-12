@@ -100,13 +100,30 @@ class RTCService {
     this.pc.oniceconnectionstatechange = () => {
       if (!this.pc) return;
       const state = this.pc.iceConnectionState;
-      console.log(`[RTCService] ICE State: ${state}`);
-      
-      if (state === 'connected') {
-        useCallStore.getState().setCallStatus('connected');
-      } else if (state === 'failed' || state === 'disconnected') {
-        // We could trigger a reconnect here
-        console.warn('[RTCService] Connection state issue:', state);
+
+      // 'connected' = direct path established, 'completed' = all candidates checked
+      // Android WebRTC often jumps directly to 'completed' — both mean the call is live
+      if (state === 'connected' || state === 'completed') {
+        const currentStatus = useCallStore.getState().callStatus;
+        // Only transition to connected if we're not already there (avoid redundant triggers)
+        if (currentStatus !== 'connected') {
+          useCallStore.getState().setCallStatus('connected');
+        }
+      } else if (state === 'failed') {
+        useCallStore.getState().setCallStatus('failed');
+      } else if (state === 'disconnected') {
+        // Transient — give a moment before treating as failure
+        this._disconnectTimer = setTimeout(() => {
+          if (this.pc && this.pc.iceConnectionState === 'disconnected') {
+            useCallStore.getState().setCallStatus('failed');
+          }
+        }, 4000);
+      } else if (state === 'checking') {
+        // Clear any stale disconnect timer when ICE restarts
+        if (this._disconnectTimer) {
+          clearTimeout(this._disconnectTimer);
+          this._disconnectTimer = null;
+        }
       }
     };
 

@@ -4,11 +4,11 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
   Animated,
   Easing,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { nukeAllData } from "../../utils/secureStorage";
 
 /**

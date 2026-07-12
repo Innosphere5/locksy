@@ -273,10 +273,34 @@ function VoiceMessagePlayer({ uri, durationText, isSent, screenWidth }) {
 // MESSAGE BUBBLE COMPONENT (RESPONSIVE)
 // ============================================================================
 
-function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, screenDimensions, onImagePress, onFilePress, onViewOncePress }) {
+function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, screenDimensions, onImagePress, onFilePress, onViewOncePress, onExpire }) {
   const isSent = msg.sender === 'sent';
   const isSystem = msg.sender === 'system';
   const { screenWidth, screenHeight } = screenDimensions;
+
+  // Real-time countdown for temporary messages
+  const [timeLeft, setTimeLeft] = useState(null);
+
+  useEffect(() => {
+    if (!msg.expiresAt) {
+      setTimeLeft(null);
+      return;
+    }
+
+    const updateCountdown = () => {
+      const remaining = Math.max(0, Math.ceil((msg.expiresAt - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        if (onExpire) {
+          onExpire(msg.id);
+        }
+      }
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [msg.expiresAt, msg.id]);
 
   // Responsive sizing
   const bubbleMaxWidth = getMessageBubbleMaxWidth(screenWidth, isSelected);
@@ -515,7 +539,14 @@ function MessageBubble({ msg, onLongPress, onReplyPress, isSelected, onSelect, s
             </View>
           )}
 
-
+          {/* Destruct Timer Countdown */}
+          {timeLeft !== null && timeLeft > 0 && (
+            <View style={[styles.timerBadge, { alignSelf: isSent ? 'flex-end' : 'flex-start' }]}>
+              <Text style={styles.timerText}>
+                ⏱️ {timeLeft < 60 ? `${timeLeft}s` : `${Math.floor(timeLeft / 60)}m ${timeLeft % 60}s`}
+              </Text>
+            </View>
+          )}
 
           {/* Reactions */}
           {msg.reactions && msg.reactions.length > 0 && (
@@ -1112,9 +1143,9 @@ export default function ChatMessageScreen({ navigation, route }) {
     deriveKey();
   }, [contactCID, identityPrivKeyRef, contacts]);
 
-  // Subscribe to real-time status updates
+  // Subscribe to real-time status updates and timer updates
   useEffect(() => {
-    if (!contactCID) return;
+    if (!contactCID || !roomId) return;
 
     const onStatusUpdate = (data) => {
       if (data.cid === contactCID) {
@@ -1123,34 +1154,48 @@ export default function ChatMessageScreen({ navigation, route }) {
       }
     };
 
-    const unsubscribe = socketService.on("user:status", onStatusUpdate);
-    return () => unsubscribe();
-  }, [contactCID]);
+    const onTimerUpdate = async (data) => {
+      if (data.roomId === roomId) {
+        console.log(`[ChatMessage] Timer update received for room ${roomId}: ${data.timerMs}`);
+        // Reload messages from storage to reflect new timer
+        const updated = await messageStorage.getMessages(roomId);
+        setMessages(updated.map(m => formatSocketMsg(m)));
+      }
+    };
+
+    const unsubscribeStatus = socketService.on("user:status", onStatusUpdate);
+    const unsubscribeTimer = socketService.on("room:timer:updated", onTimerUpdate);
+    return () => {
+      unsubscribeStatus();
+      unsubscribeTimer();
+    };
+  }, [contactCID, roomId]);
+
+  const prune = async () => {
+    if (!roomId) return;
+    const pruned = await messageStorage.pruneExpiredMessages();
+
+    if (pruned && pruned.length > 0) {
+      console.log(`[ChatMessage] Syncing ${pruned.length} local prunes to server...`);
+      // Group by roomId and sync
+      const rooms = [...new Set(pruned.map(p => p.roomId))];
+      for (const rid of rooms) {
+        const ids = pruned.filter(p => p.roomId === rid).map(p => p.id);
+        socketService.deleteMessagesBulk(rid, ids);
+      }
+
+      // Reload messages to reflect deletion in current room
+      const currentPrunedCount = pruned.filter(p => p.roomId === roomId).length;
+      if (currentPrunedCount > 0) {
+        const stored = await messageStorage.getMessages(roomId);
+        setMessages(stored.map(m => formatSocketMsg(m)));
+      }
+    }
+  };
 
   // Periodic pruning of messages while in chat
   useEffect(() => {
     if (!roomId) return;
-
-    const prune = async () => {
-      const pruned = await messageStorage.pruneExpiredMessages();
-
-      if (pruned && pruned.length > 0) {
-        console.log(`[ChatMessage] Syncing ${pruned.length} local prunes to server...`);
-        // Group by roomId and sync
-        const rooms = [...new Set(pruned.map(p => p.roomId))];
-        for (const rid of rooms) {
-          const ids = pruned.filter(p => p.roomId === rid).map(p => p.id);
-          socketService.deleteMessagesBulk(rid, ids);
-        }
-
-        // Reload messages to reflect deletion in current room
-        const currentPrunedCount = pruned.filter(p => p.roomId === roomId).length;
-        if (currentPrunedCount > 0) {
-          const stored = await messageStorage.getMessages(roomId);
-          setMessages(stored.map(m => formatSocketMsg(m)));
-        }
-      }
-    };
 
     const interval = setInterval(prune, 30000); // Check every 30s
     prune(); // Check immediately on focus
@@ -1232,6 +1277,15 @@ export default function ChatMessageScreen({ navigation, route }) {
         // 3. Sync with server for any missed messages
         const history = await socketService.getChatHistory(roomId);
         const historyMessages = history.messages || [];
+
+        // Sync timer from server
+        if (history.timer !== undefined && history.timer !== null) {
+          const localTimer = await messageStorage.getChatTimer(roomId);
+          if (localTimer !== history.timer) {
+            await messageStorage.saveChatTimer(roomId, history.timer);
+            await messageStorage.pruneExpiredMessages();
+          }
+        }
 
         // PROACTIVE FILTERING: Don't show or save messages that should have expired
         const timerMs = await messageStorage.getChatTimer(roomId);
@@ -1524,8 +1578,8 @@ export default function ChatMessageScreen({ navigation, route }) {
       senderNickname: message.senderNickname || `User-${message.senderCid?.substring(0, 4) || '?'}`,
       avatar: message.senderAvatar || (message.senderCid !== userCID ? contactAvatar : userAvatarSafe),
       timerMs: message.timerMs || (isMedia && msgData.timerMs),
-      expiresAt: message.expiresAt || (isMedia && msgData.expiresAt) ||
-        ((message.timerMs || (isMedia && msgData.timerMs)) ? (Date.now() + (message.timerMs || msgData.timerMs)) : null),
+      expiresAt: message.expiresAt || message.expireAt || (isMedia && (msgData.expiresAt || msgData.expireAt)) ||
+        ((message.timerMs || (isMedia && msgData.timerMs)) ? ((message.createdAt || (message.timestamp ? new Date(message.timestamp).getTime() : Date.now())) + (message.timerMs || msgData.timerMs)) : null),
       is_e2ee: message.is_e2ee || (isMedia && msgData.is_e2ee),
       media_id: safeMediaId,
       replyTo: message.replyTo || (isMedia && msgData.replyTo),
@@ -1679,6 +1733,7 @@ export default function ChatMessageScreen({ navigation, route }) {
 
     const messageText = inputText.trim();
     const isViewOnce = isViewOnceText;
+    const timerMs = await messageStorage.getChatTimer(roomId);
 
     // Add to UI immediately
     const tempMsg = {
@@ -1692,6 +1747,8 @@ export default function ChatMessageScreen({ navigation, route }) {
       isViewOnce: isViewOnce,
       readStatus: 'sending',
       avatar: userAvatarSafe,
+      timerMs: timerMs > 0 ? timerMs : null,
+      expiresAt: timerMs > 0 ? (Date.now() + timerMs) : null,
       replyTo: replyTo ? {
         id: replyTo.id,
         text: replyTo.text,
@@ -1711,7 +1768,8 @@ export default function ChatMessageScreen({ navigation, route }) {
         originalType: 'text',
         isViewOnce: isViewOnce,
         text: messageText,
-        replyTo: tempMsg.replyTo
+        replyTo: tempMsg.replyTo,
+        timerMs: timerMs > 0 ? timerMs : null
       };
 
       socketService.sendMessage(roomId, payload, userNickname, userAvatarSafe);
@@ -2606,6 +2664,7 @@ export default function ChatMessageScreen({ navigation, route }) {
               }}
               onFilePress={handleOpenFile}
               onViewOncePress={handleOpenViewOnce}
+              onExpire={prune}
             />
           )}
           contentContainerStyle={[

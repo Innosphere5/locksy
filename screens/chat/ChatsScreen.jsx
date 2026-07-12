@@ -7,7 +7,6 @@ import {
   FlatList,
   TextInput,
   Switch,
-  SafeAreaView,
   StatusBar,
   Platform,
   Modal,
@@ -754,7 +753,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
-    paddingBottom: Platform.OS === "ios" ? 24 : 12,
     paddingTop: 10,
   },
   navItem: {

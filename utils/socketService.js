@@ -7,6 +7,7 @@
  */
 
 import { io } from "socket.io-client";
+import { AppState } from "react-native";
 import AppConfig from "../config/appConfig";
 import messageStorage from "./messageStorage";
 
@@ -19,6 +20,20 @@ class SocketService {
     this.callbacks = new Map(); // eventName -> Set of callbacks
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 10;
+    this.serverUrl = null;
+
+    // Listen for AppState changes to handle foregrounding
+    if (typeof AppState !== "undefined") {
+      AppState.addEventListener("change", (nextAppState) => {
+        if (nextAppState === "active") {
+          console.log("[SocketService] App came to foreground. Checking socket state...");
+          if (this.socket && !this.isConnected) {
+            console.log("[SocketService] Socket is not connected on foreground. Forcing reconnect...");
+            this.socket.connect();
+          }
+        }
+      });
+    }
   }
 
   /**
@@ -35,7 +50,40 @@ class SocketService {
     return new Promise((resolve, reject) => {
       // If already connected, resolve immediately
       if (this.socket && this.isConnected) {
-        resolve();
+        if (this.serverUrl && this.serverUrl !== serverUrl) {
+          console.log("[SocketService] Server URL changed, closing old socket...");
+          this.socket.disconnect();
+          this.socket.removeAllListeners();
+          this.socket = null;
+          this.isConnected = false;
+        } else {
+          resolve();
+          return;
+        }
+      }
+
+      this.serverUrl = serverUrl;
+
+      // If socket exists but is disconnected, reuse it!
+      if (this.socket) {
+        console.log("[SocketService] Re-using existing socket, forcing connection...");
+        
+        const onConnect = () => {
+          this.socket.off("connect", onConnect);
+          this.socket.off("connect_error", onConnectError);
+          resolve();
+        };
+
+        const onConnectError = (error) => {
+          this.socket.off("connect", onConnect);
+          this.socket.off("connect_error", onConnectError);
+          reject(error);
+        };
+
+        this.socket.on("connect", onConnect);
+        this.socket.on("connect_error", onConnectError);
+        
+        this.socket.connect();
         return;
       }
 
@@ -47,7 +95,7 @@ class SocketService {
           reconnection: true,
           reconnectionDelay: 1000,
           reconnectionDelayMax: 5000,
-          reconnectionAttempts: this.maxReconnectAttempts,
+          reconnectionAttempts: Infinity, // Keep reconnecting forever
           autoConnect: true,
           path: "/socket.io/",
         });
@@ -115,8 +163,10 @@ class SocketService {
     this.socket.removeAllListeners("call:rejected");
     this.socket.removeAllListeners("call:ended");
     this.socket.removeAllListeners("call:busy");
+    this.socket.removeAllListeners("call:ringing");
     this.socket.removeAllListeners("message:status:update");
     this.socket.removeAllListeners("message:sent");
+    this.socket.removeAllListeners("room:timer:updated");
 
     // Standard Message Listener
     this.socket.on("message:received", async (message) => {
@@ -255,6 +305,11 @@ class SocketService {
       this._dispatch("call:busy", data);
     });
 
+    this.socket.on("call:ringing", (data) => {
+      console.log("[SocketService] Received call:ringing", data.callId);
+      this._dispatch("call:ringing", data);
+    });
+
     // Message Status Update Listener
     this.socket.on("message:status:update", async (data) => {
       console.log("[SocketService] Global message:status:update triggered", data.messageId, data.status);
@@ -269,6 +324,13 @@ class SocketService {
     this.socket.on("message:sent", (data) => {
       console.log("[SocketService] Message sent (ack) received", data.id);
       this._dispatch("message:sent", data);
+    });
+
+    // Room Timer Listener
+    this.socket.on("room:timer:updated", async (data) => {
+      console.log("[SocketService] Global room:timer:updated triggered", data.roomId, data.timerMs);
+      await messageStorage.saveChatTimer(data.roomId, data.timerMs);
+      this._dispatch("room:timer:updated", data);
     });
   }
 
@@ -739,6 +801,11 @@ class SocketService {
     if (!this.socket) return;
     console.log(`[SocketService] Requesting server-side history clear for: ${roomId}`);
     this.socket.emit("room:clearHistory", { roomId });
+  }
+
+  updateChatTimer(roomId, timerMs) {
+    if (!this.socket) return;
+    this.socket.emit("room:timer:update", { roomId, timerMs });
   }
 
 

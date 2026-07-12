@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { verifyUser } from '../services/auth';
 import { useAuth } from '../hooks/useAuth';
 
@@ -61,10 +62,11 @@ const LoginScreen = ({ navigation }) => {
       colors={['#0f172a', '#1e293b']}
       style={styles.container}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.wrapper}
-      >
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.wrapper}
+        >
         <View style={styles.header}>
           <Text style={styles.title}>Welcome to Locksy</Text>
           <Text style={styles.subtitle}>Enter your credentials to access the secure portal</Text>
@@ -101,13 +103,17 @@ const LoginScreen = ({ navigation }) => {
           <Text style={styles.footerText}>Secure Device Binding Active</Text>
           <View style={styles.securityDot} />
         </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  safeArea: {
     flex: 1,
   },
   wrapper: {

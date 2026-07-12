@@ -5,17 +5,18 @@ import {
   StyleSheet,
   TouchableOpacity,
   FlatList,
-  SafeAreaView,
   StatusBar,
   Platform,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, FONTS, SIZES, SPACING, RADIUS } from '../../theme';
 import { useCalls } from '../../context/CallsContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function CallsScreen({ navigation }) {
   const { callHistory, deleteCallFromHistory, initiateCall } = useCalls();
   const [selectedCallId, setSelectedCallId] = useState(null);
+  const insets = useSafeAreaInsets();
 
   // Format time (e.g., 14:23)
   const formatCallTime = (timestamp) => {
@@ -162,7 +163,7 @@ export default function CallsScreen({ navigation }) {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
 
       {/* Header */}
@@ -204,7 +205,7 @@ export default function CallsScreen({ navigation }) {
       />
 
       {/* Bottom Navigation */}
-      <View style={styles.tabBar}>
+      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TouchableOpacity style={styles.tabItem} onPress={() => navigation.navigate('Chats')}>
           <Ionicons name="chatbubble-outline" size={22} color={COLORS.tabInactive} />
           <Text style={styles.tabLabel}>Chats</Text>
@@ -218,7 +219,7 @@ export default function CallsScreen({ navigation }) {
           <Text style={styles.tabLabel}>Vault</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -414,7 +415,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    paddingBottom: 20,
     paddingTop: 10,
     backgroundColor: COLORS.background,
   },

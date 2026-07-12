@@ -4,7 +4,8 @@ import { create } from 'zustand';
  * Call States:
  * idle: No active call session
  * calling: Outgoing call initiated, waiting for receiver to ring
- * ringing: Incoming call received OR outgoing call is ringing at receiver
+ * ringing: Incoming call received (receiver side only)
+ * ringing_remote: Outgoing call is ringing at receiver's phone (sender side only)
  * connecting: Call accepted, WebRTC negotiation in progress
  * connected: Media stream established
  * reconnecting: Peer connection lost, attempting to recover
