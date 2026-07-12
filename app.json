@@ -7,15 +7,13 @@
     "scheme": "locksy",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.locksy.app",
@@ -88,7 +86,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "e5b4276c-45bb-4075-a496-a24c1ee4509f"
+        "projectId": "da18476e-4821-4c94-acb7-1902ff79c0e3"
       },
       "apiUrl": "https://locksy.info"
     },
@@ -98,6 +96,6 @@
     "updates": {
       "fallbackToCacheTimeout": 0
     },
-    "owner": "kevinburger"
+    "owner": "badobadiapp"
   }
 }
